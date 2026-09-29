@@ -29,6 +29,38 @@ run_council(ticker)
 Events streamed to the browser (SSE): `start`, `analyst` (x12), `stage`, `case` (x2), `challenge`,
 `verdict`, `done`, or `error`.
 
+## Scoring (hybrid: formula + bounded judge)
+
+All tunables live at the top of `backend/app/scoring.py`.
+
+1. **Analyst inputs.** For each horizon (weeks, months, years) every specialist gives a lean and a
+   conviction from 0 to 100. Neutral with conviction 0 means "my data doesn't cover this horizon"
+   and removes that analyst from the horizon. A confident neutral counts as evidence of no edge.
+2. **Weights.** `weight = WEIGHTS[analyst][horizon] × DATA_QUALITY` (good 1.0, partial 0.6, poor 0.3).
+   For example, options count 1.0 for weeks and 0.1 for years, and financials the reverse.
+3. **Challenger penalties.** Each objection names `affected_analysts` and `horizons`. High severity
+   halves the weight and medium cuts it 20%; stacked penalties bottom out at 25%. Each
+   `shared_evidence` group (an echo chamber) is rescaled so the whole group weighs as much as its
+   largest member.
+4. **Score per horizon:**
+   ```
+   score = Σ wᵢ·dᵢ·cᵢ / (PRIOR + Σ wᵢ·rᵢ)     dᵢ = +1 bull / −1 bear / 0 neutral
+                                              rᵢ = 1 if directional, cᵢ/100 if neutral
+   ```
+   `PRIOR` (1.0) is a phantom neutral analyst, so thin evidence can't produce an extreme score. Each
+   analyst's `points` (its term of the numerator over the same denominator) sum to the score. This is
+   the "what drove this" breakdown in the UI.
+5. **Confidence** = `100 × √evidence × (0.3 + 0.7 × agreement)`, where `evidence` is the usable
+   weight present compared with a full, clean council, and `agreement` = |net| / gross directional
+   signal.
+6. **Judge.** The judge sees the formula scores and their breakdown. It may move each horizon by at
+   most ±15 points, with a written reason. It never picks the rating.
+7. **Rating.** Final horizon scores are blended (weeks 0.2, months 0.4, years 0.4). Bands:
+   ≥ 50 Strong Buy, ≥ 20 Buy, within ±20 Hold, ≤ −20 Sell, ≤ −50 Strong Sell.
+8. **Calibration.** Every verdict is appended to the `verdicts` table with the price at run time.
+   The weights and bands are starting guesses. Once enough history exists, fit them against realized
+   forward returns per horizon. Scores measure strength of evidence, not probabilities.
+
 ## Data sources (free tier)
 
 | Segment | Source | Key needed | Notes |
@@ -63,6 +95,7 @@ fundamentals), Quiver Quantitative (congress, lobbying), ORATS or Unusual Whales
 - [ ] Verify every adapter live against real tickers (large cap, small cap, ETF, foreign ADR).
 - [ ] Persist runs in Postgres; public shareable run URLs (`/r/{run_id}`) and history per ticker.
 - [ ] Price chart on the ticker page (weekly closes are already in the price packet).
-- [ ] Track verdict accuracy over time (did the weeks/months calls play out?).
+- [ ] Accuracy report over the `verdicts` table (forward returns at 4 weeks / 6 months / 1-3 years vs. score),
+      then tune `WEIGHTS`, the prior, and rating bands from it.
 - [ ] Auth + per-user quotas before wide sharing; background job queue so runs survive page reloads.
 - [ ] Deploy: frontend to Vercel, API to Render/Railway/Fly, with `ALLOWED_ORIGINS` set to the site URL.

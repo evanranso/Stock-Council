@@ -37,8 +37,18 @@ class DataPacket(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+Horizon = Literal["weeks", "months", "years"]
+HORIZONS: tuple[Horizon, ...] = ("weeks", "months", "years")
+
+
 class HorizonView(BaseModel):
     lean: Lean
+    conviction: int = Field(
+        description=(
+            "0-100 strength of evidence for this lean over this horizon. For a neutral lean: high means the data "
+            "clearly says 'no edge', 0 means your data doesn't speak to this horizon at all."
+        )
+    )
     rationale: str = Field(description="One or two sentences grounded in the data.")
 
 
@@ -100,33 +110,100 @@ class Objection(BaseModel):
     claim_challenged: str
     objection: str
     severity: Literal["low", "medium", "high"]
+    affected_analysts: list[str] = Field(
+        description=(
+            "analyst_ids whose horizon views this objection undermines. Empty if it only hits an advocate's framing."
+        )
+    )
+    horizons: list[Horizon] = Field(description="Which horizons the objection applies to.")
+
+
+class SharedEvidence(BaseModel):
+    fact: str = Field(description="The single underlying fact several analysts are all reacting to.")
+    analyst_ids: list[str] = Field(description="The analysts whose views all rest on that fact (2 or more).")
 
 
 class ChallengeReport(BaseModel):
     objections: list[Objection]
     leans_that_hold_up: list[str] = Field(description="Claims that survived scrutiny.")
-    echo_chamber_check: str = Field(
-        description="Are multiple analysts leaning on the same underlying fact? Name it if so."
+    shared_evidence: list[SharedEvidence] = Field(
+        description="Echo chambers: groups of analysts counting the same underlying fact. Empty if none."
     )
     net_assessment: str
 
 
+# ---------------------------------------------------------------------------
+# Scoring (computed in code, see scoring.py)
+# ---------------------------------------------------------------------------
+
+
+class Contribution(BaseModel):
+    analyst_id: str
+    lean: Lean
+    conviction: int
+    weight: float = Field(description="Horizon weight x data quality, after challenger penalties.")
+    points: float = Field(description="This analyst's share of the horizon score; all points sum to the score.")
+    penalties: list[str] = Field(default_factory=list)
+
+
+class HorizonScore(BaseModel):
+    horizon: Horizon
+    score: float = Field(description="-100 (strongly bearish) to +100 (strongly bullish).")
+    confidence: int
+    evidence: float = Field(description="0-1: how much of the council's usual evidence was present and usable.")
+    agreement: float = Field(description="0-1: how much the directional analysts agree with each other.")
+    contributions: list[Contribution]
+
+
+# ---------------------------------------------------------------------------
+# Stage 4: the judge rules on the formula; the final verdict is assembled in code
+# ---------------------------------------------------------------------------
+
+
+class HorizonRuling(BaseModel):
+    adjustment: int = Field(
+        description="Points to add to the formula score (negative = more bearish). 0 if the formula got it right."
+    )
+    adjustment_reason: str = Field(description="Why the adjustment; say 'Formula stands.' if 0.")
+    rationale: str = Field(description="Plain-English outlook for this horizon.")
+
+
+class JudgeRuling(BaseModel):
+    summary: str = Field(description="3-5 sentence plain-English verdict.")
+    weeks: HorizonRuling
+    months: HorizonRuling
+    years: HorizonRuling
+    key_catalysts: list[str]
+    key_risks: list[str]
+    dissenting_analysts: list[str] = Field(description="analyst_id: short reason the verdict goes against them.")
+    what_would_change_the_verdict: str
+
+
+Rating = Literal["strong_buy", "buy", "hold", "sell", "strong_sell"]
+
+
 class HorizonVerdict(BaseModel):
     lean: Lean
-    confidence: int = Field(description="0-100.")
+    score: float = Field(description="Final score: formula score + judge adjustment, -100..100.")
+    formula_score: float
+    adjustment: int
+    adjustment_reason: str
+    confidence: int
     rationale: str
+    scoring: HorizonScore
 
 
 class Verdict(BaseModel):
-    rating: Literal["strong_buy", "buy", "hold", "sell", "strong_sell"]
-    confidence: int = Field(description="0-100 overall confidence in the rating.")
-    summary: str = Field(description="3-5 sentence plain-English verdict.")
+    rating: Rating
+    score: float = Field(description="Horizon-weighted blend of the final horizon scores.")
+    confidence: int
+    summary: str
     weeks: HorizonVerdict
     months: HorizonVerdict
     years: HorizonVerdict
     key_catalysts: list[str]
     key_risks: list[str]
-    dissenting_analysts: list[str] = Field(description="analyst_ids whose view the verdict goes against, and why.")
+    dissenting_analysts: list[str]
     what_would_change_the_verdict: str
 
 
@@ -136,6 +213,7 @@ class CouncilRun(BaseModel):
     started_at: datetime
     finished_at: datetime | None = None
     model: str
+    reference_price: float | None = Field(default=None, description="Last close when the council ran.")
     analysts: list[AnalystReport] = Field(default_factory=list)
     bull: CaseReport | None = None
     bear: CaseReport | None = None

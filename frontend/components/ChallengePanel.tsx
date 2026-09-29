@@ -18,12 +18,23 @@ export default function ChallengePanel({ data }: { data?: ChallengeReport }) {
                 </div>
                 <div className="text-zinc-400">&ldquo;{o.claim_challenged}&rdquo;</div>
                 <div className="text-zinc-200">{o.objection}</div>
+                {o.affected_analysts.length > 0 && o.severity !== "low" && (
+                  <div className="mt-1 text-xs text-zinc-500">
+                    Weight cut for {o.affected_analysts.join(", ")} ({o.horizons.join(", ")})
+                  </div>
+                )}
               </li>
             ))}
           </ul>
           <div className="text-zinc-400">
-            <span className="font-medium text-zinc-300">Echo-chamber check: </span>
-            {data.echo_chamber_check}
+            <span className="font-medium text-zinc-300">Echo chambers: </span>
+            {data.shared_evidence.length === 0
+              ? "none found."
+              : data.shared_evidence.map((g, i) => (
+                  <div key={i} className="mt-1">
+                    {g.analyst_ids.join(", ")} all rest on &ldquo;{g.fact}&rdquo;, counted once.
+                  </div>
+                ))}
           </div>
           {data.leans_that_hold_up.length > 0 && (
             <div className="text-zinc-400">

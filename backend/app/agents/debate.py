@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import json
 
-from ..schemas import AnalystReport, CaseReport, ChallengeReport, Verdict
+from ..schemas import AnalystReport, CaseReport, ChallengeReport, Horizon, HorizonScore, JudgeRuling
+from ..scoring import LEAN_THRESHOLD, MAX_JUDGE_ADJUSTMENT, STRONG_THRESHOLD
 from .llm import structured
 
 HORIZONS = "weeks (1-4 weeks), months (1-6 months), and years (1-3 years)"
@@ -56,24 +57,38 @@ Attack weak reasoning wherever it is:
   counted multiple times (e.g. price momentum, analyst upgrades, and bullish
   news all reacting to the same earnings beat). Name the shared root.
 - Horizon mixing: short-term signals used to justify long-term claims or vice versa.
-- Specialists whose stance doesn't follow from their own findings.
-Also say which leans survive scrutiny. Severity 'high' means the claim should
-not carry weight in the verdict. Horizons in play: {HORIZONS}.
+- Specialists whose horizon views don't follow from their own findings.
+
+Your objections change the numbers. The verdict is computed by a formula over
+each analyst's per-horizon lean and conviction:
+- For each objection, list the analyst_ids it undermines in affected_analysts
+  and the horizons it applies to. 'high' halves that analyst's weight, 'medium'
+  cuts it 20%, 'low' is noted only. An objection to an advocate's framing
+  affects no analyst unless the underlying analyst view is itself wrong.
+- Report every echo chamber as a shared_evidence group; each group is
+  collapsed so it counts as one analyst.
+Be precise and fair: penalize only what is actually weak, and say which leans
+survive scrutiny. Horizons in play: {HORIZONS}.
 """
 
 JUDGE_PROMPT = f"""\
 You are the JUDGE of an investment council. You have twelve independent
-specialist reports, a bull case, a bear case, and a challenger's objections.
-Deliver the verdict.
+specialist reports, a bull case, a bear case, the challenger's objections, and
+the council's FORMULA SCORES: for each horizon ({HORIZONS}), a score from -100
+(strongly bearish) to +100 (strongly bullish) computed from the analysts'
+convictions, weighted by relevance and data quality, after the challenger's
+penalties.
 
-- Weigh evidence, not votes. Six weak neutral reports do not outweigh one
-  strong, well-evidenced finding; claims the challenger rated 'high' severity
-  should carry little weight unless you explain why the objection fails.
-- Give a separate lean and confidence for each horizon: {HORIZONS}. It is
-  normal for them to differ.
-- Confidence must reflect data quality and disagreement. Missing analysts and
-  split councils should lower it.
-- List dissenting analysts by analyst_id with a short reason.
+Your job is to check the formula and explain the result:
+- You may adjust each horizon's score by at most {MAX_JUDGE_ADJUSTMENT} points
+  either way. Adjust only for something the formula cannot see: a single
+  finding that should dominate (e.g. going-concern language in a filing), an
+  objection the formula over- or under-penalized, or a contribution that
+  misreads the reports. Otherwise use 0 and say "Formula stands."
+- The rating and leans are derived from the final numbers (|score| below
+  {LEAN_THRESHOLD} is neutral/Hold, {STRONG_THRESHOLD}+ is strong). Argue for the number, not a label.
+- Explain each horizon in plain English, including its main drivers.
+- List dissenting analysts as "analyst_id: reason".
 - Write the summary for a smart non-professional investor. No hype.
 This is research, not personalized financial advice.
 """
@@ -98,17 +113,34 @@ async def challenge(
     return await structured(CHALLENGER_PROMPT, user, ChallengeReport, effort)
 
 
+def render_scores(scores: dict[Horizon, HorizonScore]) -> str:
+    lines = []
+    for h, s in scores.items():
+        lines.append(
+            f"{h}: score {s.score:+.1f}, confidence {s.confidence}, "
+            f"evidence {s.evidence:.2f}, agreement {s.agreement:.2f}"
+        )
+        for c in s.contributions:
+            penalties = f" | penalties: {'; '.join(c.penalties)}" if c.penalties else ""
+            lines.append(
+                f"  {c.analyst_id}: {c.lean} {c.conviction}, weight {c.weight}, points {c.points:+.1f}{penalties}"
+            )
+    return "\n".join(lines)
+
+
 async def judge(
     ticker: str,
     reports: list[AnalystReport],
     bull: CaseReport,
     bear: CaseReport,
     objections: ChallengeReport,
+    scores: dict[Horizon, HorizonScore],
     effort: str,
-) -> Verdict:
+) -> JudgeRuling:
     user = (
         f"Ticker: {ticker}\n\n<specialist_reports>\n{render_reports(reports)}\n</specialist_reports>\n\n"
         f"<bull_case>{bull.model_dump_json()}</bull_case>\n\n<bear_case>{bear.model_dump_json()}</bear_case>\n\n"
-        f"<challenger>{objections.model_dump_json()}</challenger>\n\nDeliver the verdict."
+        f"<challenger>{objections.model_dump_json()}</challenger>\n\n"
+        f"<formula_scores>\n{render_scores(scores)}\n</formula_scores>\n\nDeliver your ruling."
     )
-    return await structured(JUDGE_PROMPT, user, Verdict, effort)
+    return await structured(JUDGE_PROMPT, user, JudgeRuling, effort)

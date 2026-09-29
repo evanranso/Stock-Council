@@ -27,7 +27,7 @@ export default function AnalystCard({ name, reads, report }: { name: string; rea
         <>
           <div className="mt-3 flex gap-1 text-[11px]">
             {(["weeks", "months", "years"] as const).map((h) => (
-              <LeanBadge key={h} lean={op.outlook[h].lean} label={h} />
+              <LeanBadge key={h} lean={op.outlook[h].lean} label={`${h} ${op.outlook[h].conviction}`} />
             ))}
           </div>
           <button onClick={() => setOpen(!open)} className="mt-3 self-start text-xs text-zinc-400 hover:text-zinc-200">

@@ -27,9 +27,18 @@ Rules:
 - Neutral is a legitimate stance. Low conviction is a legitimate answer. Thin
   or missing data should lower your conviction and data_quality.
 - Separate the horizons: what matters for the next few weeks is often different
-  from what matters over years. Your data may only speak to some horizons;
-  lean neutral with an honest rationale on the others.
+  from what matters over years.
 - Mention data staleness (e.g. 13F lag, delayed quotes) when it matters.
+
+How your horizon views are used: your lean and conviction for weeks, months
+and years feed directly into the council's scoring formula, so calibrate them.
+- Conviction is strength of evidence, not excitement. Roughly: 80-100 the data
+  is unusually clear and consistent; 50-70 a real but mixed signal; 20-40 a
+  weak tilt; below 20 barely anything.
+- If your data genuinely doesn't speak to a horizon, answer neutral with
+  conviction 0. That removes you from that horizon instead of diluting it.
+- A confident neutral (the data clearly shows no edge) is useful: give it a
+  real conviction.
 """
 
 

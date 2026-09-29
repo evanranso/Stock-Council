@@ -4,9 +4,10 @@ import { useEffect, useReducer } from "react";
 import AnalystCard from "./AnalystCard";
 import CaseCard from "./CaseCard";
 import ChallengePanel from "./ChallengePanel";
+import ScoreStrip from "./ScoreStrip";
 import VerdictPanel from "./VerdictPanel";
 import { ANALYSTS } from "@/lib/analysts";
-import type { AnalystReport, CaseReport, ChallengeReport, CouncilEvent, Verdict } from "@/lib/types";
+import type { AnalystReport, CaseReport, ChallengeReport, CouncilEvent, Scores, Verdict } from "@/lib/types";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -17,6 +18,8 @@ interface State {
   bull?: CaseReport;
   bear?: CaseReport;
   challenge?: ChallengeReport;
+  baseline?: Scores;
+  adjusted?: Scores;
   verdict?: Verdict;
   cached: boolean;
   error?: string;
@@ -31,6 +34,8 @@ function reducer(state: State, event: CouncilEvent & { cached?: boolean }): Stat
       return { ...s, companyName: event.company_name };
     case "analyst":
       return { ...s, reports: { ...s.reports, [event.report.analyst_id]: event.report } };
+    case "scores":
+      return { ...s, [event.phase]: event.scores };
     case "stage":
       return { ...s, stage: event.stage };
     case "case":
@@ -90,6 +95,11 @@ export default function Council({ ticker }: { ticker: string }) {
             <AnalystCard key={a.id} name={a.name} reads={a.reads} report={state.reports[a.id]} />
           ))}
         </div>
+        {state.baseline && (
+          <div className="mt-4">
+            <ScoreStrip scores={state.baseline} label="Formula score from the analysts alone (before debate)" />
+          </div>
+        )}
       </section>
 
       {debating && (
@@ -106,6 +116,11 @@ export default function Council({ ticker }: { ticker: string }) {
         <section>
           <SectionTitle n={3} title="Challenger" />
           <ChallengePanel data={state.challenge} />
+          {state.adjusted && (
+            <div className="mt-4">
+              <ScoreStrip scores={state.adjusted} label="Formula score after the challenger's penalties" />
+            </div>
+          )}
         </section>
       )}
 

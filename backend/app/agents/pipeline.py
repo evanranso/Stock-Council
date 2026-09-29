@@ -7,11 +7,12 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
+from .. import scoring
 from ..config import get_settings
 from ..data import _yf
 from ..data.base import in_thread
 from ..data.registry import ADAPTERS
-from ..schemas import AnalystReport, CouncilRun, DataPacket
+from ..schemas import AnalystReport, CouncilRun, DataPacket, HorizonScore
 from . import debate
 from .specialists import SPECIALISTS, run_specialist
 
@@ -46,6 +47,9 @@ async def run_council(ticker: str) -> AsyncIterator[Event]:
     for done in asyncio.as_completed(tasks):
         packet, report = await done
         run.analysts.append(report)
+        if packet.segment == "price":
+            # Logged with the verdict so later runs can check how the call played out.
+            run.reference_price = packet.data.get("last_close")
         yield {
             "type": "analyst",
             "report": report.model_dump(mode="json"),
@@ -58,6 +62,10 @@ async def run_council(ticker: str) -> AsyncIterator[Event]:
     if sum(r.opinion is not None for r in run.analysts) < 3:
         yield {"type": "error", "message": "Too few analysts could form an opinion to hold a debate."}
         return
+
+    # The raw formula, before the debate touches it.
+    baseline = scoring.score_all(run.analysts)
+    yield {"type": "scores", "phase": "baseline", "scores": _dump(baseline)}
 
     # Stage 2: bull and bear build their cases independently of each other.
     yield {"type": "stage", "stage": "debate"}
@@ -74,9 +82,18 @@ async def run_council(ticker: str) -> AsyncIterator[Event]:
     run.challenge = await debate.challenge(ticker, run.analysts, run.bull, run.bear, effort)
     yield {"type": "challenge", "challenge": run.challenge.model_dump(mode="json")}
 
-    # Stage 4: the verdict.
+    # The formula again, with the challenger's penalties and echo-chamber collapses applied.
+    adjusted = scoring.score_all(run.analysts, run.challenge)
+    yield {"type": "scores", "phase": "adjusted", "scores": _dump(adjusted)}
+
+    # Stage 4: the judge may nudge each horizon within a fixed band; the rating comes from the numbers.
     yield {"type": "stage", "stage": "verdict"}
-    run.verdict = await debate.judge(ticker, run.analysts, run.bull, run.bear, run.challenge, effort)
+    ruling = await debate.judge(ticker, run.analysts, run.bull, run.bear, run.challenge, adjusted, effort)
+    run.verdict = scoring.assemble_verdict(adjusted, ruling)
     run.finished_at = datetime.now(UTC)
     yield {"type": "verdict", "verdict": run.verdict.model_dump(mode="json")}
     yield {"type": "done", "run": run.model_dump(mode="json")}
+
+
+def _dump(scores: dict[str, HorizonScore]) -> dict[str, Any]:
+    return {h: s.model_dump(mode="json") for h, s in scores.items()}

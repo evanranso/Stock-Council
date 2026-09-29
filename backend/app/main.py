@@ -88,6 +88,7 @@ async def analyze(ticker: str, request: Request, refresh: bool = False) -> Strea
             return
         if events and events[-1]["type"] == "done":
             cache.save_run(symbol, events)
+            cache.record_verdict(events[-1]["run"])
 
     return StreamingResponse(
         stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}

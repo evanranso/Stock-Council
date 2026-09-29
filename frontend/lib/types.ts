@@ -1,7 +1,9 @@
 // Mirrors backend/app/schemas.py
 export type Lean = "bullish" | "bearish" | "neutral";
+export type Horizon = "weeks" | "months" | "years";
+export const HORIZONS: Horizon[] = ["weeks", "months", "years"];
 
-export interface HorizonView { lean: Lean; rationale: string }
+export interface HorizonView { lean: Lean; conviction: number; rationale: string }
 export interface Finding { point: string; evidence: string; implication: Lean }
 
 export interface AnalystOpinion {
@@ -12,7 +14,7 @@ export interface AnalystOpinion {
   risks_to_view: string[];
   what_would_change_my_mind: string;
   data_quality: "good" | "partial" | "poor";
-  outlook: { weeks: HorizonView; months: HorizonView; years: HorizonView };
+  outlook: Record<Horizon, HorizonView>;
 }
 
 export interface AnalystReport {
@@ -26,17 +28,53 @@ export interface AnalystReport {
 export interface Argument { claim: string; supporting_analysts: string[]; evidence: string }
 export interface CaseReport { thesis: string; arguments: Argument[]; catalysts: string[]; weakest_point: string }
 
-export interface Objection { target: string; claim_challenged: string; objection: string; severity: "low" | "medium" | "high" }
+export interface Objection {
+  target: string;
+  claim_challenged: string;
+  objection: string;
+  severity: "low" | "medium" | "high";
+  affected_analysts: string[];
+  horizons: Horizon[];
+}
+export interface SharedEvidence { fact: string; analyst_ids: string[] }
 export interface ChallengeReport {
   objections: Objection[];
   leans_that_hold_up: string[];
-  echo_chamber_check: string;
+  shared_evidence: SharedEvidence[];
   net_assessment: string;
 }
 
-export interface HorizonVerdict { lean: Lean; confidence: number; rationale: string }
+export interface Contribution {
+  analyst_id: string;
+  lean: Lean;
+  conviction: number;
+  weight: number;
+  points: number;
+  penalties: string[];
+}
+export interface HorizonScore {
+  horizon: Horizon;
+  score: number;
+  confidence: number;
+  evidence: number;
+  agreement: number;
+  contributions: Contribution[];
+}
+export type Scores = Record<Horizon, HorizonScore>;
+
+export interface HorizonVerdict {
+  lean: Lean;
+  score: number;
+  formula_score: number;
+  adjustment: number;
+  adjustment_reason: string;
+  confidence: number;
+  rationale: string;
+  scoring: HorizonScore;
+}
 export interface Verdict {
   rating: "strong_buy" | "buy" | "hold" | "sell" | "strong_sell";
+  score: number;
   confidence: number;
   summary: string;
   weeks: HorizonVerdict;
@@ -51,6 +89,7 @@ export interface Verdict {
 export type CouncilEvent =
   | { type: "start"; ticker: string; company_name: string | null; analysts: { id: string; name: string }[] }
   | { type: "analyst"; report: AnalystReport; sources: string[]; notes: string[] }
+  | { type: "scores"; phase: "baseline" | "adjusted"; scores: Scores }
   | { type: "stage"; stage: "debate" | "challenge" | "verdict" }
   | { type: "case"; side: "bull" | "bear"; case: CaseReport }
   | { type: "challenge"; challenge: ChallengeReport }
