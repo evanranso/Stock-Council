@@ -21,7 +21,8 @@ services:
       - key: ALLOWED_ORIGINS
         sync: false
       - key: ALLOWED_ORIGIN_REGEX
-        value: https://.*\.stock-council\.pages\.dev
+        # Cloudflare Workers preview deploys: https://<id>-stock-council.evanranaso.workers.dev
+        value: https://.*-stock-council\.evanranaso\.workers\.dev
       - key: TRUST_PROXY
         value: "true"
       - key: RATE_LIMIT_PER_HOUR

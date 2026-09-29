@@ -41,27 +41,29 @@ Do the steps in order: the website needs the server's URL, and the server needs 
 
 ## Step 2: Website on Cloudflare Pages (about 5 minutes)
 
-1. In the Cloudflare dashboard, go to **Workers & Pages → Create → Pages → Connect to Git** and pick
-   the `Stock-Council` repo.
-2. Build settings:
-   - Project name: `stock-council`
-   - Framework preset: **Next.js (Static HTML Export)**
+The site deploys as a Cloudflare **Worker** serving static files (`frontend/wrangler.jsonc`).
+
+1. In the Cloudflare dashboard, go to **Workers & Pages → Create → Import a repository** and pick the
+   `Stock-Council` repo. Name the project `stock-council`.
+2. In **Settings → Build**:
    - Root directory: `frontend`
    - Build command: `npm run build`
-   - Build output directory: `out`
-   - Environment variables: `NEXT_PUBLIC_API_URL` = your Render URL from step 1 (no trailing
-     slash), and `NODE_VERSION` = `22`
-3. Click **Save and Deploy**. Your site will be at `https://stock-council.pages.dev`. If that name
-   was taken, Cloudflare shows the actual URL.
+   - Deploy command: `npx wrangler deploy`
+3. In **Settings → Build → Variables and secrets** (the *build* variables, not the runtime ones),
+   add `NEXT_PUBLIC_API_URL` = your Render URL from step 1 (no trailing slash) and
+   `NODE_VERSION` = `22`. The URL is baked into the site at build time, so it must be a build variable.
+4. Redeploy: **Deployments → latest → Retry build**, or push a commit.
+5. In **Settings → Domains & Routes**, make sure the `workers.dev` route is enabled. Your site is
+   `https://stock-council.<your-subdomain>.workers.dev`.
 
 ## Step 3: Connect them
 
-In Render → `stock-council-api` → **Environment**, set `ALLOWED_ORIGINS` to your Pages URL, for
-example `https://stock-council.pages.dev`. Save; Render redeploys automatically. If you add a custom
-domain later, add it too, comma-separated.
+In Render → `stock-council-api` → **Environment**, set `ALLOWED_ORIGINS` to your site URL, for
+example `https://stock-council.evanranaso.workers.dev`. Save; Render redeploys automatically. If you
+add a custom domain later, add it too, comma-separated.
 
-Open the Pages URL, enter a ticker, and the council should run. Share links look like
-`https://stock-council.pages.dev/analyze?t=AAPL`.
+Open the site, enter a ticker, and the council should run. Share links look like
+`https://stock-council.evanranaso.workers.dev/analyze?t=AAPL`.
 
 ---
 
