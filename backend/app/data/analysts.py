@@ -1,4 +1,4 @@
-"""Analyst price targets, rating mix, and recent upgrades/downgrades."""
+"""Sell-side view: rating mix over time (Finnhub, free key) plus price targets and upgrades when Yahoo allows."""
 
 from __future__ import annotations
 
@@ -9,30 +9,49 @@ from .base import clean, df_records, finnhub, guarded, in_thread, unavailable
 SEGMENT = "analysts"
 
 
-@guarded(SEGMENT)
-async def fetch(ticker: str) -> DataPacket:
-    targets = await in_thread(_yf.safe_attr, ticker, "analyst_price_targets")
-    summary = await in_thread(_yf.safe_attr, ticker, "recommendations_summary")
-    changes = await in_thread(_yf.safe_attr, ticker, "upgrades_downgrades")
-    info = await in_thread(_yf.info, ticker)
-
-    data: dict = {
-        "current_price": info.get("currentPrice"),
+def _yahoo(ticker: str) -> dict:
+    info = _yf.info(ticker)
+    targets = _yf.safe_attr(ticker, "analyst_price_targets")
+    return {
         "price_targets": clean(targets) if targets else None,
         "number_of_analysts": info.get("numberOfAnalystOpinions"),
         "consensus_key": info.get("recommendationKey"),
-        "consensus_mean_1_strong_buy_to_5_sell": info.get("recommendationMean"),
-        "rating_mix_by_month": df_records(summary),
-        "recent_rating_changes": df_records(changes, limit=25),
+        "rating_mix_by_month": df_records(_yf.safe_attr(ticker, "recommendations_summary")),
+        "recent_rating_changes": df_records(_yf.safe_attr(ticker, "upgrades_downgrades"), limit=25),
     }
-    sources = ["Yahoo Finance (yfinance)"]
+
+
+@guarded(SEGMENT)
+async def fetch(ticker: str) -> DataPacket:
+    data: dict = {}
+    sources: list[str] = []
     notes: list[str] = []
     try:
-        data["finnhub_recommendation_trend"] = (await finnhub("stock/recommendation", symbol=ticker))[:6]
-        sources.append("Finnhub")
+        trend = await finnhub("stock/recommendation", symbol=ticker)
+        if trend:
+            data["recommendation_trend_by_month"] = trend[:6]
+            sources.append("Finnhub recommendation trends")
     except Exception as exc:  # noqa: BLE001
-        notes.append(f"Finnhub recommendation trend unavailable: {exc}")
+        notes.append(f"Finnhub unavailable ({exc}).")
 
-    if not data["price_targets"] and not data["rating_mix_by_month"]:
-        return unavailable(SEGMENT, ticker, "No analyst coverage found.")
-    return DataPacket(segment=SEGMENT, ticker=ticker, sources=sources, notes=notes, data=clean(data))
+    yahoo = await in_thread(_yahoo, ticker)
+    if yahoo["price_targets"] or yahoo["rating_mix_by_month"]:
+        data.update({k: v for k, v in yahoo.items() if v})
+        sources.append("Yahoo Finance")
+    else:
+        notes.append(
+            "Price targets unavailable (Yahoo blocks most cloud servers; a paid source such as FMP adds them)."
+        )
+
+    if not data:
+        return unavailable(
+            SEGMENT, ticker, "No analyst data. Add a free FINNHUB_API_KEY in Render to enable rating trends."
+        )
+    return DataPacket(
+        segment=SEGMENT,
+        ticker=ticker,
+        status="ok" if "price_targets" in data else "partial",
+        sources=sources,
+        notes=notes,
+        data=clean(data),
+    )

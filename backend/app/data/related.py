@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from ..schemas import DataPacket
-from . import _yf
+from . import _yf, sec
 from . import indicators as ind
 from .base import clean, finnhub, guarded, in_thread, unavailable
 
@@ -58,9 +58,17 @@ def _perf(series: pd.Series) -> dict:
 
 @guarded(SEGMENT)
 async def fetch(ticker: str) -> DataPacket:
-    info = await in_thread(_yf.info, ticker)
-    sector_etf = SECTOR_ETFS.get(info.get("sector", ""))
     notes: list[str] = []
+    info: dict = {}
+    try:
+        company = await sec.company_info(ticker)  # SEC works from cloud servers; Yahoo's profile often doesn't
+        if company:
+            info = {"sector": company["sector"], "industry": company["industry"]}
+    except Exception as exc:  # noqa: BLE001
+        notes.append(f"SEC company profile unavailable ({type(exc).__name__}).")
+    if not info.get("sector"):
+        info = await in_thread(_yf.info, ticker) or info
+    sector_etf = SECTOR_ETFS.get(info.get("sector") or "")
     peers: list[str] = []
     try:
         peers = [p for p in await finnhub("stock/peers", symbol=ticker) if p != ticker][:6]

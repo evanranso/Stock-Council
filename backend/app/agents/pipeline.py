@@ -9,7 +9,7 @@ from typing import Any
 
 from .. import scoring
 from ..config import get_settings
-from ..data import _yf
+from ..data import _yf, sec
 from ..data.base import in_thread
 from ..data.registry import ADAPTERS
 from ..schemas import AnalystReport, CouncilRun, DataPacket, HorizonScore
@@ -21,10 +21,9 @@ Event = dict[str, Any]
 
 async def run_council(ticker: str) -> AsyncIterator[Event]:
     settings = get_settings()
-    info = await in_thread(_yf.info, ticker)
     run = CouncilRun(
         ticker=ticker,
-        company_name=info.get("longName") or info.get("shortName"),
+        company_name=await _company_name(ticker),
         started_at=datetime.now(UTC),
         model=settings.claude_model,
     )
@@ -93,6 +92,17 @@ async def run_council(ticker: str) -> AsyncIterator[Event]:
     run.finished_at = datetime.now(UTC)
     yield {"type": "verdict", "verdict": run.verdict.model_dump(mode="json")}
     yield {"type": "done", "run": run.model_dump(mode="json")}
+
+
+async def _company_name(ticker: str) -> str | None:
+    try:
+        company = await sec.company_info(ticker)
+        if company and company.get("name"):
+            return company["name"]
+    except Exception:  # noqa: BLE001 - the name is cosmetic; fall back to Yahoo
+        pass
+    info = await in_thread(_yf.info, ticker)
+    return info.get("longName") or info.get("shortName")
 
 
 def _dump(scores: dict[str, HorizonScore]) -> dict[str, Any]:

@@ -26,7 +26,12 @@ async def fetch(ticker: str) -> DataPacket:
         "shares_short_prior_month": info.get("sharesShortPriorMonth"),
     }
     if not data["top_institutions"]:
-        return unavailable(SEGMENT, ticker, "No institutional holder data.")
+        return unavailable(
+            SEGMENT,
+            ticker,
+            "No institutional holder data: the free source (Yahoo) blocks cloud servers. "
+            "A paid source such as FMP would enable this analyst.",
+        )
     return DataPacket(
         segment=SEGMENT,
         ticker=ticker,

@@ -19,8 +19,12 @@ export default function CaseCard({ side, data }: { side: "bull" | "bear"; data?:
           </ol>
           {data.catalysts.length > 0 && (
             <div className="text-zinc-400">
-              <span className="font-medium text-zinc-300">Catalysts: </span>
-              {data.catalysts.join("; ")}
+              <div className="mb-1 font-medium text-zinc-300">Catalysts</div>
+              <ul className="list-disc space-y-1 pl-5">
+                {data.catalysts.map((c, i) => (
+                  <li key={i}>{c}</li>
+                ))}
+              </ul>
             </div>
           )}
           <div className="text-zinc-400">

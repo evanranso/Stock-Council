@@ -14,6 +14,7 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 interface State {
   companyName: string | null;
   reports: Record<string, AnalystReport>;
+  sources: Record<string, string[]>;
   stage: "analysts" | "debate" | "challenge" | "verdict" | "done";
   bull?: CaseReport;
   bear?: CaseReport;
@@ -25,7 +26,7 @@ interface State {
   error?: string;
 }
 
-const initial: State = { companyName: null, reports: {}, stage: "analysts", cached: false };
+const initial: State = { companyName: null, reports: {}, sources: {}, stage: "analysts", cached: false };
 
 function reducer(state: State, event: CouncilEvent & { cached?: boolean }): State {
   const s = { ...state, cached: state.cached || !!event.cached };
@@ -33,7 +34,11 @@ function reducer(state: State, event: CouncilEvent & { cached?: boolean }): Stat
     case "start":
       return { ...s, companyName: event.company_name };
     case "analyst":
-      return { ...s, reports: { ...s.reports, [event.report.analyst_id]: event.report } };
+      return {
+        ...s,
+        reports: { ...s.reports, [event.report.analyst_id]: event.report },
+        sources: { ...s.sources, [event.report.analyst_id]: event.sources },
+      };
     case "scores":
       return { ...s, [event.phase]: event.scores };
     case "stage":
@@ -92,7 +97,7 @@ export default function Council({ ticker }: { ticker: string }) {
         <SectionTitle n={1} title="Independent analysts" note={`${done}/12 reported`} />
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {ANALYSTS.map((a) => (
-            <AnalystCard key={a.id} name={a.name} reads={a.reads} report={state.reports[a.id]} />
+            <AnalystCard key={a.id} name={a.name} reads={a.reads} report={state.reports[a.id]} sources={state.sources[a.id]} />
           ))}
         </div>
         {state.baseline && (

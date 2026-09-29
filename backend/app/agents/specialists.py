@@ -28,7 +28,10 @@ Rules:
   or missing data should lower your conviction and data_quality.
 - Separate the horizons: what matters for the next few weeks is often different
   from what matters over years.
-- Mention data staleness (e.g. 13F lag, delayed quotes) when it matters.
+- Weight the most recent data most. The latest quarter and trailing-twelve-month
+  figures describe the business now; older annual figures are context for the
+  trend. Say how old your key data points are, and lower conviction when they
+  are stale (e.g. 13F lag, a report from many months ago).
 
 How your horizon views are used: your lean and conviction for weeks, months
 and years feed directly into the council's scoring formula, so calibrate them.
@@ -70,11 +73,13 @@ agree. Charts speak mostly to weeks and months; be humble about years.""",
         "Fundamental Analyst",
         "financials",
         """\
-You read the financial statements and valuation: revenue growth and its trend,
-margins (gross/operating/net) and whether they are expanding, free cash flow
-quality vs net income, balance-sheet strength (cash vs debt), dilution or
-buybacks, and whether the valuation multiples are justified by the growth and
-profitability shown. Fundamentals speak mostly to months and years.""",
+You read the financial statements and valuation. Lead with the latest quarter
+and the trailing twelve months, then use the 8-quarter and 5-year series for the
+trend: revenue growth (year over year, same quarter), margins (gross/operating/
+net) and whether they are expanding, free cash flow quality vs net income,
+balance-sheet strength (cash vs debt), dilution or buybacks, and whether the
+valuation multiples (P/E, P/S, EV/operating income, FCF yield) are justified by
+the growth and profitability shown. Fundamentals speak mostly to months and years.""",
     ),
     Specialist(
         "analysts",
@@ -91,11 +96,12 @@ skew bullish; the *change* in sentiment is often more informative than the level
         "Earnings Analyst",
         "earnings",
         """\
-You read earnings expectations: forward EPS and revenue estimates, growth
-implied by them, estimate revisions (are numbers going up or down over the
-last 7/30/90 days?), the beat/miss history, and when the next report is.
-Rising estimates and consistent beats are signal; so is a stock that has
-stopped beating.""",
+You read earnings momentum and expectations: the trend of reported quarterly
+EPS and revenue (is year-over-year growth accelerating or decelerating?),
+consensus estimates and revisions when present, the beat/miss history, and
+when the next report is due. Rising estimates and consistent beats are signal;
+so is a stock that has stopped beating. If consensus estimates are missing,
+say so and read the reported trend alone with lower conviction.""",
     ),
     Specialist(
         "insiders",
@@ -192,7 +198,8 @@ def _render_packet(packet: DataPacket) -> str:
         body = body[:MAX_PACKET_CHARS] + "...[truncated]"
     return (
         f"Ticker: {packet.ticker}\n"
-        f"Data as of: {packet.as_of.isoformat()}\n"
+        f"Today's date: {packet.as_of.date().isoformat()} (judge how fresh each data point is against this)\n"
+        f"Data fetched: {packet.as_of.isoformat()}\n"
         f"Packet status: {packet.status}\n"
         f"Sources: {', '.join(packet.sources) or 'n/a'}\n"
         f"Notes: {'; '.join(packet.notes) or 'none'}\n\n"

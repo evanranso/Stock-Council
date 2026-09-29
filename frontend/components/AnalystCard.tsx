@@ -4,7 +4,17 @@ import { useState } from "react";
 import LeanBadge from "./LeanBadge";
 import type { AnalystReport } from "@/lib/types";
 
-export default function AnalystCard({ name, reads, report }: { name: string; reads: string; report?: AnalystReport }) {
+export default function AnalystCard({
+  name,
+  reads,
+  report,
+  sources,
+}: {
+  name: string;
+  reads: string;
+  report?: AnalystReport;
+  sources?: string[];
+}) {
   const [open, setOpen] = useState(false);
   const op = report?.opinion;
 
@@ -54,7 +64,10 @@ export default function AnalystCard({ name, reads, report }: { name: string; rea
                 <span className="font-medium text-zinc-300">Would change my mind: </span>
                 {op.what_would_change_my_mind}
               </div>
-              <div className="text-zinc-500">Data quality: {op.data_quality}</div>
+              <div className="text-zinc-500">
+                Data quality: {op.data_quality}
+                {sources && sources.length > 0 && <> · Sources: {sources.join(", ")}</>}
+              </div>
             </div>
           )}
         </>
