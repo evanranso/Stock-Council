@@ -1,6 +1,6 @@
 "use client";
 
-import { ANALYST_BY_ID } from "@/lib/analysts";
+import { ANALYST_BY_ID, isComingSoon, NO_DATA_TEXT } from "@/lib/analysts";
 import type { AnalystEntry } from "@/lib/council";
 import { formatValue } from "@/lib/format";
 import { HORIZONS } from "@/lib/types";
@@ -11,6 +11,7 @@ import LeanBadge, { leanTone } from "./LeanBadge";
 export default function AnalystCard({ id, entry }: { id: string; entry?: AnalystEntry }) {
   const meta = ANALYST_BY_ID[id];
   const op = entry?.report.opinion;
+  const soon = !op && isComingSoon(id);
   const metrics = entry?.highlights?.metrics ?? [];
   const series = entry?.highlights?.series;
 
@@ -24,7 +25,7 @@ export default function AnalystCard({ id, entry }: { id: string; entry?: Analyst
           <h3 className="truncate text-sm font-semibold">{meta.name}</h3>
           <p className="text-xs text-zinc-500">{meta.reads}</p>
         </div>
-        {op ? <LeanBadge lean={op.stance} /> : <span className="text-xs text-zinc-500">no data</span>}
+        {op ? <LeanBadge lean={op.stance} /> : soon ? <ComingSoon /> : <span className="text-xs text-zinc-500">no data</span>}
       </header>
 
       {op ? (
@@ -112,9 +113,23 @@ export default function AnalystCard({ id, entry }: { id: string; entry?: Analyst
           </div>
         </>
       ) : (
-        <p className="mt-3 text-xs text-zinc-500">{entry?.report.error ?? "Waiting…"}</p>
+        <p className="mt-3 text-xs text-zinc-500">
+          {soon ? `${meta.name.replace(" Analyst", "")} coverage is joining the council soon.` : entry ? NO_DATA_TEXT : "Waiting…"}
+        </p>
       )}
     </article>
+  );
+}
+
+// Source notes are written for the analysts; hide the setup/plumbing ones (keys, blocked or paid sources) from visitors.
+const PLUMBING = /api_key|finnhub|unavailable|blocks|paid|unreachable|fmp|\bkey\b/i;
+function publicNotes(notes: string[]): string[] {
+  return notes.filter((n) => !PLUMBING.test(n));
+}
+
+export function ComingSoon() {
+  return (
+    <span className="rounded-full bg-brand-500/15 px-2 py-0.5 text-[11px] font-medium text-brand-300 ring-1 ring-brand-400/30">Coming soon</span>
   );
 }
 
@@ -134,7 +149,7 @@ function Sources({ entry, quality }: { entry?: AnalystEntry; quality: string }) 
           </>
         )}
       </div>
-      {entry.notes.length > 0 && <div className="mt-1 text-zinc-500">{entry.notes.join(" ")}</div>}
+      {publicNotes(entry.notes).length > 0 && <div className="mt-1 text-zinc-500">{publicNotes(entry.notes).join(" ")}</div>}
     </div>
   );
 }

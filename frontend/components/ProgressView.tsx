@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ANALYSTS } from "@/lib/analysts";
+import { ANALYSTS, isComingSoon } from "@/lib/analysts";
+import { ComingSoon } from "./AnalystCard";
 import { type CouncilState, progress } from "@/lib/council";
 import LeanBadge from "./LeanBadge";
 
@@ -116,6 +117,8 @@ export default function ProgressView({ state }: { state: CouncilState }) {
                     <span className="text-zinc-500">researching…</span>
                   ) : op ? (
                     <LeanBadge lean={op.stance} label={`${op.stance} ${op.conviction}`} />
+                  ) : isComingSoon(a.id) ? (
+                    <ComingSoon />
                   ) : (
                     <span className="text-zinc-500">no data</span>
                   )}

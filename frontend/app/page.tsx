@@ -1,7 +1,8 @@
 import Link from "next/link";
 import RecentList from "@/components/RecentList";
 import TickerSearch from "@/components/TickerSearch";
-import { ANALYSTS } from "@/lib/analysts";
+import { ComingSoon } from "@/components/AnalystCard";
+import { ANALYSTS, isComingSoon } from "@/lib/analysts";
 
 const STEPS = [
   { icon: "🔍", title: "12 independent reads", text: "Each analyst sees only its own data: charts, filings, insiders, options, macro and more." },
@@ -66,10 +67,11 @@ export default function Home() {
               <span className="grid h-9 w-9 place-items-center rounded-xl bg-white/5 text-lg" aria-hidden>
                 {a.icon}
               </span>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{a.name}</div>
                 <div className="text-xs text-zinc-500">{a.reads}</div>
               </div>
+              {isComingSoon(a.id) && <ComingSoon />}
             </div>
           ))}
         </div>

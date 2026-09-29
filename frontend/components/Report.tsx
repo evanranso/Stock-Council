@@ -1,4 +1,4 @@
-import { ANALYSTS } from "@/lib/analysts";
+import { ANALYSTS, isComingSoon } from "@/lib/analysts";
 import type { CouncilState } from "@/lib/council";
 import { formatValue } from "@/lib/format";
 import AnalystCard from "./AnalystCard";
@@ -35,7 +35,8 @@ export default function Report({ state }: { state: CouncilState }) {
     bull: opinions.filter((o) => o.stance === "bullish").length,
     neutral: opinions.filter((o) => o.stance === "neutral").length,
     bear: opinions.filter((o) => o.stance === "bearish").length,
-    missing: ANALYSTS.length - opinions.length,
+    // "Coming soon" analysts aren't counted as missing data.
+    missing: ANALYSTS.filter((a) => !state.analysts[a.id]?.report.opinion && !isComingSoon(a.id)).length,
   };
   const priceSeries = state.analysts.price?.highlights?.series;
   const revenueSeries = state.analysts.financials?.highlights?.series;
@@ -71,7 +72,7 @@ export default function Report({ state }: { state: CouncilState }) {
           </div>
           <div className="card flex flex-col gap-5 p-5">
             <div>
-              <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-zinc-500">How the 12 analysts lean</h3>
+              <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-zinc-500">How the analysts lean</h3>
               <VoteBar {...vote} />
             </div>
             {stats.length > 0 && (
