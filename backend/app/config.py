@@ -35,7 +35,13 @@ class Settings:
     allowed_origins: list[str] = field(
         default_factory=lambda: _list(os.getenv("ALLOWED_ORIGINS", "http://localhost:3000"))
     )
+    # e.g. https://.*\.stock-council\.pages\.dev for Cloudflare preview deploys
+    allowed_origin_regex: str | None = os.getenv("ALLOWED_ORIGIN_REGEX") or None
     rate_limit_per_hour: int = int(os.getenv("RATE_LIMIT_PER_HOUR", "10"))
+    # Hard ceiling on new (uncached) council runs per UTC day, across all visitors. 0 = no limit.
+    max_runs_per_day: int = int(os.getenv("MAX_RUNS_PER_DAY", "40"))
+    # Behind a hosting proxy (Render, Railway, Fly) the real visitor IP is in X-Forwarded-For.
+    trust_proxy: bool = os.getenv("TRUST_PROXY", "false").lower() == "true"
     cache_path: str = os.getenv("CACHE_PATH", "stock_council.db")
     cache_ttl_hours: int = int(os.getenv("CACHE_TTL_HOURS", "12"))
 

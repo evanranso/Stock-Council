@@ -10,7 +10,7 @@ export default function TickerSearch() {
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const ticker = value.trim().toUpperCase();
-    if (/^[A-Z][A-Z0-9.\-]{0,9}$/.test(ticker)) router.push(`/t/${encodeURIComponent(ticker)}`);
+    if (/^[A-Z][A-Z0-9.\-]{0,9}$/.test(ticker)) router.push(`/analyze?t=${encodeURIComponent(ticker)}`);
   }
 
   return (

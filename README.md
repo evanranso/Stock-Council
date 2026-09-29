@@ -66,6 +66,11 @@ analyst would see (swap `price` for any segment).
 
 Tests: `cd backend && pytest` · Lint: `ruff check . && ruff format --check .` · Frontend: `npm run lint && npm run build`
 
+## Deploying
+
+The website goes on Cloudflare Pages (free) and the agent server on Render. Step-by-step
+instructions are in [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
 ## Cost
 
 A full run is 16 model calls (12 specialists + bull + bear + challenger + judge). Runs are cached per

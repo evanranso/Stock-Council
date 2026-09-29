@@ -21,10 +21,39 @@ from .data.registry import ADAPTERS
 
 app = FastAPI(title="Stock Council API")
 settings = get_settings()
-app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins, allow_methods=["GET"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.allowed_origins,
+    allow_origin_regex=settings.allowed_origin_regex,
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
 
 TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 _recent_runs: dict[str, deque[float]] = defaultdict(deque)
+_daily_runs: dict[str, int] = {}
+
+
+def _client_ip(request: Request) -> str:
+    if settings.trust_proxy:
+        # The proxy appends the address it saw; earlier entries can be forged by the client.
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            return forwarded.split(",")[-1].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _check_daily_budget() -> None:
+    if settings.max_runs_per_day <= 0:
+        return
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    if _daily_runs.get(today, 0) >= settings.max_runs_per_day:
+        raise HTTPException(
+            429, "The council has hit today's analysis limit. Cached tickers still work; try again tomorrow."
+        )
+    if today not in _daily_runs:
+        _daily_runs.clear()  # drop previous days
+    _daily_runs[today] = _daily_runs.get(today, 0) + 1
 
 
 def _ticker(raw: str) -> str:
@@ -70,10 +99,19 @@ async def raw_data(ticker: str, segment: str) -> dict[str, Any]:
 async def analyze(ticker: str, request: Request, refresh: bool = False) -> StreamingResponse:
     symbol = _ticker(ticker)
     cached = None if refresh else cache.get_run(symbol)
+    refusal: str | None = None
     if cached is None:
-        _check_rate_limit(request.client.host if request.client else "unknown")
+        try:
+            _check_rate_limit(_client_ip(request))
+            _check_daily_budget()
+        except HTTPException as exc:
+            # Browsers' EventSource can't read an error status, so send the reason as an event.
+            refusal = str(exc.detail)
 
     async def stream() -> AsyncIterator[str]:
+        if refusal is not None:
+            yield _sse({"type": "error", "message": refusal})
+            return
         if cached is not None:
             for event in cached:
                 yield _sse({**event, "cached": True})
