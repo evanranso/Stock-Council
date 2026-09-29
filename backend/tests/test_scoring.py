@@ -33,7 +33,11 @@ def report(aid, lean="bullish", conviction=60, quality="good", horizons=None):
 
 def challenge(objections=(), shared=()):
     return ChallengeReport(
-        objections=list(objections), leans_that_hold_up=[], shared_evidence=list(shared), net_assessment="n"
+        objections=list(objections),
+        leans_that_hold_up=[],
+        shared_evidence=list(shared),
+        net_assessment="n",
+        headline="h",
     )
 
 
@@ -112,6 +116,9 @@ def test_assemble_verdict_clamps_judge_and_derives_rating():
     reports = [report(a, conviction=90) for a in scoring.WEIGHTS]
     scores = scoring.score_all(reports)
     ruling = JudgeRuling(
+        bottom_line="b",
+        reasons_for=["f"],
+        reasons_against=["a"],
         summary="s",
         weeks=HorizonRuling(adjustment=-100, adjustment_reason="x", rationale="r"),
         months=HorizonRuling(adjustment=0, adjustment_reason="Formula stands.", rationale="r"),

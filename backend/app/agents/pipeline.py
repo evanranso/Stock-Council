@@ -11,6 +11,7 @@ from .. import scoring
 from ..config import get_settings
 from ..data import _yf, sec
 from ..data.base import in_thread
+from ..data.highlights import highlights
 from ..data.registry import ADAPTERS
 from ..schemas import AnalystReport, CouncilRun, DataPacket, HorizonScore
 from . import debate
@@ -54,6 +55,8 @@ async def run_council(ticker: str) -> AsyncIterator[Event]:
             "report": report.model_dump(mode="json"),
             "sources": packet.sources,
             "notes": packet.notes,
+            "as_of": packet.as_of.isoformat(),
+            "highlights": highlights(packet),
         }
 
     order = {s.id: i for i, s in enumerate(SPECIALISTS)}

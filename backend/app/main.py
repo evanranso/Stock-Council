@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -13,7 +14,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from . import cache
+from . import cache, search
 from .agents.pipeline import run_council
 from .agents.specialists import SPECIALISTS
 from .config import get_settings
@@ -95,18 +96,81 @@ async def raw_data(ticker: str, segment: str) -> dict[str, Any]:
     return (await ADAPTERS[segment](_ticker(ticker))).model_dump(mode="json")
 
 
+@app.get("/api/search")
+async def search_tickers(q: str = "", limit: int = 8) -> list[dict[str, Any]]:
+    """Autocomplete: match a ticker or company name ("apple" -> AAPL)."""
+    if not q.strip():
+        return []
+    return await search.search(q[:60], min(max(limit, 1), 20))
+
+
+class LiveRun:
+    """A council run that lives on the server, independent of any one browser tab.
+
+    Leaving the page doesn't cancel the (paid) work: the run keeps going, and
+    reopening the ticker replays everything so far and follows the rest.
+    """
+
+    def __init__(self, symbol: str) -> None:
+        self.symbol = symbol
+        self.events: list[dict[str, Any]] = []
+        self.done = False
+        self.changed = asyncio.Condition()
+        self.task: asyncio.Task | None = None
+
+    async def publish(self, event: dict[str, Any] | None) -> None:
+        async with self.changed:
+            if event is None:
+                self.done = True
+            else:
+                self.events.append(event)
+            self.changed.notify_all()
+
+    async def drive(self) -> None:
+        try:
+            async for event in run_council(self.symbol):
+                await self.publish(event)
+        except Exception as exc:  # noqa: BLE001 - surface failures to the UI instead of a dead stream
+            await self.publish({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
+        finally:
+            if self.events and self.events[-1]["type"] == "done":
+                cache.save_run(self.symbol, self.events)
+                cache.record_verdict(self.events[-1]["run"])
+            await self.publish(None)
+            _live.pop(self.symbol, None)
+
+    async def follow(self) -> AsyncIterator[dict[str, Any]]:
+        sent = 0
+        while True:
+            async with self.changed:
+                await self.changed.wait_for(lambda n=sent: len(self.events) > n or self.done)
+                batch, finished = self.events[sent:], self.done
+            for event in batch:
+                yield event
+            sent += len(batch)
+            if finished and sent == len(self.events):
+                return
+
+
+_live: dict[str, LiveRun] = {}
+
+
 @app.get("/api/analyze/{ticker}")
 async def analyze(ticker: str, request: Request, refresh: bool = False) -> StreamingResponse:
     symbol = _ticker(ticker)
-    cached = None if refresh else cache.get_run(symbol)
+    live = _live.get(symbol)
+    cached = None if (refresh or live) else cache.get_run(symbol)
     refusal: str | None = None
-    if cached is None:
+    if live is None and cached is None:
         try:
             _check_rate_limit(_client_ip(request))
             _check_daily_budget()
         except HTTPException as exc:
             # Browsers' EventSource can't read an error status, so send the reason as an event.
             refusal = str(exc.detail)
+        else:
+            live = _live[symbol] = LiveRun(symbol)
+            live.task = asyncio.create_task(live.drive())
 
     async def stream() -> AsyncIterator[str]:
         if refusal is not None:
@@ -116,17 +180,9 @@ async def analyze(ticker: str, request: Request, refresh: bool = False) -> Strea
             for event in cached:
                 yield _sse({**event, "cached": True})
             return
-        events: list[dict[str, Any]] = []
-        try:
-            async for event in run_council(symbol):
-                events.append(event)
-                yield _sse(event)
-        except Exception as exc:  # noqa: BLE001 - surface failures to the UI instead of a dead stream
-            yield _sse({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
-            return
-        if events and events[-1]["type"] == "done":
-            cache.save_run(symbol, events)
-            cache.record_verdict(events[-1]["run"])
+        assert live is not None
+        async for event in live.follow():
+            yield _sse(event)
 
     return StreamingResponse(
         stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}

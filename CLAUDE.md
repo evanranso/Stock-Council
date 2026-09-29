@@ -11,3 +11,6 @@ See `docs/ARCHITECTURE.md` for the design.
   `registry.py`, with a matching `Specialist` in `agents/specialists.py` and entry in `frontend/lib/analysts.ts`.
 - `frontend/lib/types.ts` mirrors `backend/app/schemas.py`; change them together.
 - All Claude calls go through `backend/app/agents/llm.py`.
+- Website state: `frontend/lib/council.ts` folds the SSE event stream into page state (live runs and saved
+  history both replay events through it). Saved reports live in the browser (`lib/history.ts`, localStorage).
+- New agent output fields must be optional in `frontend/lib/types.ts` so older saved runs still render.

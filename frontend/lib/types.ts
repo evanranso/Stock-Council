@@ -1,4 +1,4 @@
-// Mirrors backend/app/schemas.py
+// Mirrors backend/app/schemas.py. Fields added later are optional so older saved runs still render.
 export type Lean = "bullish" | "bearish" | "neutral";
 export type Horizon = "weeks" | "months" | "years";
 export const HORIZONS: Horizon[] = ["weeks", "months", "years"];
@@ -25,8 +25,19 @@ export interface AnalystReport {
   error: string | null;
 }
 
+export type MetricFormat = "usd" | "usd_big" | "pct" | "rate" | "num" | "int" | "date" | "text";
+export interface Metric { label: string; value: number | string; format: MetricFormat }
+export interface Series { label: string; format: MetricFormat; points: { t: string; v: number }[] }
+export interface Highlights { metrics: Metric[]; series: Series | null }
+
 export interface Argument { claim: string; supporting_analysts: string[]; evidence: string }
-export interface CaseReport { thesis: string; arguments: Argument[]; catalysts: string[]; weakest_point: string }
+export interface CaseReport {
+  thesis: string;
+  arguments: Argument[];
+  catalysts: string[];
+  weakest_point: string;
+  key_points?: string[];
+}
 
 export interface Objection {
   target: string;
@@ -42,6 +53,7 @@ export interface ChallengeReport {
   leans_that_hold_up: string[];
   shared_evidence: SharedEvidence[];
   net_assessment: string;
+  headline?: string;
 }
 
 export interface Contribution {
@@ -72,10 +84,14 @@ export interface HorizonVerdict {
   rationale: string;
   scoring: HorizonScore;
 }
+export type Rating = "strong_buy" | "buy" | "hold" | "sell" | "strong_sell";
 export interface Verdict {
-  rating: "strong_buy" | "buy" | "hold" | "sell" | "strong_sell";
+  rating: Rating;
   score: number;
   confidence: number;
+  bottom_line?: string;
+  reasons_for?: string[];
+  reasons_against?: string[];
   summary: string;
   weeks: HorizonVerdict;
   months: HorizonVerdict;
@@ -88,11 +104,20 @@ export interface Verdict {
 
 export type CouncilEvent =
   | { type: "start"; ticker: string; company_name: string | null; analysts: { id: string; name: string }[] }
-  | { type: "analyst"; report: AnalystReport; sources: string[]; notes: string[] }
+  | {
+      type: "analyst";
+      report: AnalystReport;
+      sources: string[];
+      notes: string[];
+      as_of?: string;
+      highlights?: Highlights;
+    }
   | { type: "scores"; phase: "baseline" | "adjusted"; scores: Scores }
   | { type: "stage"; stage: "debate" | "challenge" | "verdict" }
   | { type: "case"; side: "bull" | "bear"; case: CaseReport }
   | { type: "challenge"; challenge: ChallengeReport }
   | { type: "verdict"; verdict: Verdict }
-  | { type: "done" }
+  | { type: "done"; run?: { ticker: string; finished_at?: string; started_at?: string } }
   | { type: "error"; message: string };
+
+export type StoredEvent = CouncilEvent & { cached?: boolean };

@@ -103,6 +103,9 @@ class CaseReport(BaseModel):
     arguments: list[Argument] = Field(description="3-6 arguments, strongest first.")
     catalysts: list[str] = Field(description="Events that would prove this case right.")
     weakest_point: str = Field(description="The most honest admission of where this case is thin.")
+    key_points: list[str] = Field(
+        description="The case at a glance: exactly 3 skimmable bullets, each under 15 words, strongest first."
+    )
 
 
 class Objection(BaseModel):
@@ -130,6 +133,9 @@ class ChallengeReport(BaseModel):
         description="Echo chambers: groups of analysts counting the same underlying fact. Empty if none."
     )
     net_assessment: str
+    headline: str = Field(
+        description="One sentence under 25 words: the most important objection and its effect on the call."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +175,9 @@ class HorizonRuling(BaseModel):
 
 
 class JudgeRuling(BaseModel):
+    bottom_line: str = Field(description="The call in one plain sentence under 25 words.")
+    reasons_for: list[str] = Field(description="2-4 bullets under 15 words: the strongest evidence for the call.")
+    reasons_against: list[str] = Field(description="2-3 bullets under 15 words: what argues against the call.")
     summary: str = Field(description="3-5 sentence plain-English verdict.")
     weeks: HorizonRuling
     months: HorizonRuling
@@ -197,6 +206,9 @@ class Verdict(BaseModel):
     rating: Rating
     score: float = Field(description="Horizon-weighted blend of the final horizon scores.")
     confidence: int
+    bottom_line: str
+    reasons_for: list[str]
+    reasons_against: list[str]
     summary: str
     weeks: HorizonVerdict
     months: HorizonVerdict

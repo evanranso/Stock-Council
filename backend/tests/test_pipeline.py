@@ -32,11 +32,17 @@ CASE = CaseReport(
     thesis="t",
     arguments=[Argument(claim="c", supporting_analysts=["price"], evidence="e")],
     catalysts=["k"],
+    key_points=["kp1", "kp2", "kp3"],
     weakest_point="w",
 )
-CHALLENGE = ChallengeReport(objections=[], leans_that_hold_up=["c"], shared_evidence=[], net_assessment="n")
+CHALLENGE = ChallengeReport(
+    objections=[], leans_that_hold_up=["c"], shared_evidence=[], net_assessment="n", headline="h"
+)
 # The judge tries to move weeks by 50 points; the formula only allows 15.
 RULING = JudgeRuling(
+    bottom_line="b",
+    reasons_for=["f"],
+    reasons_against=["a"],
     summary="s",
     weeks=HorizonRuling(adjustment=50, adjustment_reason="overreach", rationale="r"),
     months=HorizonRuling(adjustment=0, adjustment_reason="Formula stands.", rationale="r"),

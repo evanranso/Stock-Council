@@ -1,0 +1,146 @@
+import { ANALYST_BY_ID } from "@/lib/analysts";
+import { RATING_LABEL, RATING_STYLE, signed } from "@/lib/format";
+import { HORIZONS, type Verdict } from "@/lib/types";
+import { Meter, ScoreGauge } from "./charts";
+import Disclosure from "./Disclosure";
+import LeanBadge from "./LeanBadge";
+import ScoreBar from "./ScoreBar";
+
+const HORIZON_LABEL = { weeks: "Next few weeks", months: "Next few months", years: "Next 1–3 years" } as const;
+
+function glow(rating: Verdict["rating"]): string {
+  if (rating.includes("buy")) return "from-emerald-500/20 via-emerald-500/5";
+  if (rating.includes("sell")) return "from-rose-500/20 via-rose-500/5";
+  return "from-amber-400/15 via-amber-400/5";
+}
+
+export default function VerdictHero({
+  ticker,
+  companyName,
+  verdict,
+  finishedAt,
+  cached,
+}: {
+  ticker: string;
+  companyName: string | null;
+  verdict: Verdict;
+  finishedAt?: string;
+  cached?: boolean;
+}) {
+  const reasonsFor = verdict.reasons_for ?? verdict.key_catalysts.slice(0, 3);
+  const reasonsAgainst = verdict.reasons_against ?? verdict.key_risks.slice(0, 3);
+
+  return (
+    <section id="verdict" className={`card fade-up relative overflow-hidden bg-gradient-to-br ${glow(verdict.rating)} to-transparent p-6 sm:p-8`}>
+      <div className="flex flex-wrap items-start gap-6">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm text-zinc-400">
+            The council&apos;s verdict
+            {finishedAt && <> · {new Date(finishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</>}
+            {cached && <> · recent saved run</>}
+          </p>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight sm:text-4xl">
+            {ticker}
+            {companyName && <span className="ml-3 align-middle text-lg font-normal text-zinc-400">{companyName}</span>}
+          </h1>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <span className={`rounded-xl px-4 py-1.5 text-xl font-bold shadow-lg ${RATING_STYLE[verdict.rating]}`}>{RATING_LABEL[verdict.rating]}</span>
+            <div className="w-40">
+              <div className="mb-1 flex justify-between text-xs text-zinc-400">
+                <span>Confidence</span>
+                <span className="font-semibold text-zinc-100">{verdict.confidence}/100</span>
+              </div>
+              <Meter value={verdict.confidence} />
+            </div>
+          </div>
+          <p className="mt-4 max-w-2xl text-lg leading-snug text-zinc-100">{verdict.bottom_line ?? verdict.summary}</p>
+        </div>
+        <div className="flex flex-col items-center">
+          <ScoreGauge score={verdict.score} />
+          <span className="text-xs text-zinc-500">Council score</span>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <div className="rounded-xl bg-emerald-400/[0.06] p-4 ring-1 ring-emerald-400/20">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-emerald-300">Why</h2>
+          <ul className="mt-2 space-y-1.5 text-sm text-zinc-200">
+            {reasonsFor.map((r, i) => (
+              <li key={i} className="flex gap-2">
+                <span aria-hidden className="text-emerald-400">✓</span>
+                {r}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="rounded-xl bg-rose-400/[0.06] p-4 ring-1 ring-rose-400/20">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-rose-300">What could go wrong</h2>
+          <ul className="mt-2 space-y-1.5 text-sm text-zinc-200">
+            {reasonsAgainst.map((r, i) => (
+              <li key={i} className="flex gap-2">
+                <span aria-hidden className="text-rose-400">!</span>
+                {r}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        {HORIZONS.map((h) => (
+          <div key={h} className="rounded-xl border border-white/10 bg-black/20 p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-zinc-400">{HORIZON_LABEL[h]}</span>
+              <LeanBadge lean={verdict[h].lean} label={signed(verdict[h].score)} />
+            </div>
+            <div className="mt-2.5">
+              <ScoreBar score={verdict[h].score} />
+            </div>
+            <p className="mt-2 line-clamp-2 text-xs text-zinc-400">{verdict[h].rationale}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-5">
+        <Disclosure label="Full verdict" openLabel="Hide full verdict">
+          <div className="grid gap-5 text-sm text-zinc-300 md:grid-cols-2">
+            <p className="md:col-span-2">{verdict.summary}</p>
+            {HORIZONS.map((h) => (
+              <p key={h}>
+                <span className="font-medium text-zinc-100">{HORIZON_LABEL[h]}: </span>
+                {verdict[h].rationale}
+              </p>
+            ))}
+            <List title="Catalysts" items={verdict.key_catalysts} />
+            <List title="Key risks" items={verdict.key_risks} />
+            <List
+              title="Analysts the verdict disagrees with"
+              items={verdict.dissenting_analysts.map((d) => {
+                const [id, ...rest] = d.split(":");
+                return ANALYST_BY_ID[id.trim()] ? `${ANALYST_BY_ID[id.trim()].name}:${rest.join(":")}` : d;
+              })}
+            />
+            <div>
+              <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-zinc-500">What would change the verdict</h4>
+              <p>{verdict.what_would_change_the_verdict}</p>
+            </div>
+          </div>
+        </Disclosure>
+      </div>
+    </section>
+  );
+}
+
+function List({ title, items }: { title: string; items: string[] }) {
+  if (!items.length) return null;
+  return (
+    <div>
+      <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-zinc-500">{title}</h4>
+      <ul className="list-disc space-y-1 pl-4">
+        {items.map((x, i) => (
+          <li key={i}>{x}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}

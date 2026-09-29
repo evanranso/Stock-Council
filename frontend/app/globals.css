@@ -1,9 +1,71 @@
 @import "tailwindcss";
 
+@theme {
+  --color-brand-300: #a5b4fc;
+  --color-brand-400: #818cf8;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-accent-400: #c084fc;
+  --color-accent-500: #a855f7;
+  --color-series-1: #3987e5;
+}
+
 :root {
   color-scheme: dark;
 }
 
 body {
-  @apply bg-zinc-950 text-zinc-100 antialiased;
+  @apply bg-[#07080d] text-zinc-100 antialiased;
+  background-image:
+    radial-gradient(60rem 30rem at 50% -10%, rgb(99 102 241 / 0.18), transparent 70%),
+    radial-gradient(40rem 20rem at 90% 10%, rgb(168 85 247 / 0.1), transparent 70%);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+.card {
+  @apply rounded-2xl border border-white/10 bg-white/[0.03];
+}
+
+.brand-text {
+  @apply bg-gradient-to-r from-brand-300 via-accent-400 to-fuchsia-300 bg-clip-text text-transparent;
+}
+
+.shimmer {
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.28), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.fade-up {
+  animation: fade-up 0.35s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer,
+  .fade-up,
+  .animate-pulse,
+  .animate-spin {
+    animation: none !important;
+  }
 }
