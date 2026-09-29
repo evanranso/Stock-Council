@@ -215,7 +215,9 @@ async def run_specialist(spec: Specialist, packet: DataPacket, effort: str) -> A
         report.error = "; ".join(packet.notes) or "No data available."
         return report
     try:
-        report.opinion = await structured(spec.system_prompt, _render_packet(packet), AnalystOpinion, effort)
+        report.opinion = await structured(
+            spec.system_prompt, _render_packet(packet), AnalystOpinion, effort, label=spec.id
+        )
     except Exception as exc:  # noqa: BLE001 - one failed analyst shouldn't sink the council
         report.error = f"{type(exc).__name__}: {exc}"
     return report

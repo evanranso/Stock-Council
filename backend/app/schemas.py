@@ -226,6 +226,7 @@ class CouncilRun(BaseModel):
     finished_at: datetime | None = None
     model: str
     reference_price: float | None = Field(default=None, description="Last close when the council ran.")
+    usage: dict[str, Any] | None = Field(default=None, description="Tokens and estimated USD cost of this run.")
     analysts: list[AnalystReport] = Field(default_factory=list)
     bull: CaseReport | None = None
     bear: CaseReport | None = None

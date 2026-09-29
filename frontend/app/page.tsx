@@ -1,4 +1,5 @@
 import Link from "next/link";
+import FreeToView from "@/components/FreeToView";
 import RecentList from "@/components/RecentList";
 import TickerSearch from "@/components/TickerSearch";
 import { ComingSoon } from "@/components/AnalystCard";
@@ -33,13 +34,16 @@ export default function Home() {
 
       <section>
         <div className="mb-4 flex items-baseline justify-between">
-          <h2 className="text-lg font-semibold">Recent analyses</h2>
+          <h2 className="text-lg font-semibold">Your recent analyses</h2>
           <Link href="/history" className="text-sm text-brand-300 hover:underline">
             View all →
           </Link>
         </div>
         <RecentList limit={6} />
       </section>
+
+      <FreeToView />
+
 
       <section>
         <h2 className="mb-4 text-lg font-semibold">How it works</h2>

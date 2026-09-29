@@ -31,7 +31,9 @@ export default function RecentList({ limit, manage = false }: { limit?: number; 
       <div className="card p-8 text-center text-zinc-400">
         No analyses yet. Search for a stock and your reports will be saved here, in this browser.
       </div>
-    ) : null;
+    ) : (
+      <p className="text-sm text-zinc-500">Analyses you run will show up here.</p>
+    );
   }
 
   return (

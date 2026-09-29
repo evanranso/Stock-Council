@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { CreditPill, InviteCapture } from "@/components/AccessWidgets";
 import HeaderSearch from "@/components/HeaderSearch";
 import "./globals.css";
 
@@ -12,6 +13,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
+        <InviteCapture />
         <header className="sticky top-0 z-30 border-b border-white/10 bg-[#07080d]/80 backdrop-blur-md">
           <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
             <Link href="/" className="flex shrink-0 items-center gap-2 font-semibold tracking-tight">
@@ -22,6 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </Link>
             <HeaderSearch />
             <nav className="ml-auto flex items-center gap-1 text-sm">
+              <CreditPill />
               <Link href="/" className="rounded-lg px-3 py-1.5 text-zinc-300 hover:bg-white/5 hover:text-white">
                 Analyze
               </Link>

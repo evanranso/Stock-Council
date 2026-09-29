@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import re
 import time
@@ -10,11 +11,12 @@ from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
-from . import cache, search
+from . import cache, search, usage
 from .agents.pipeline import run_council
 from .agents.specialists import SPECIALISTS
 from .config import get_settings
@@ -26,13 +28,22 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
     allow_origin_regex=settings.allowed_origin_regex,
-    allow_methods=["GET"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-Admin-Key"],
 )
 
 TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 _recent_runs: dict[str, deque[float]] = defaultdict(deque)
 _daily_runs: dict[str, int] = {}
+
+
+class AccessDenied(Exception):
+    """Why a fresh analysis can't start. `reason` lets the website show the right prompt."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.message = message
 
 
 def _client_ip(request: Request) -> str:
@@ -49,19 +60,12 @@ def _check_daily_budget() -> None:
         return
     today = time.strftime("%Y-%m-%d", time.gmtime())
     if _daily_runs.get(today, 0) >= settings.max_runs_per_day:
-        raise HTTPException(
-            429, "The council has hit today's analysis limit. Cached tickers still work; try again tomorrow."
+        raise AccessDenied(
+            "daily_limit", "The council has hit today's analysis limit. Recently analyzed stocks still work."
         )
     if today not in _daily_runs:
         _daily_runs.clear()  # drop previous days
     _daily_runs[today] = _daily_runs.get(today, 0) + 1
-
-
-def _ticker(raw: str) -> str:
-    t = raw.strip().upper()
-    if not TICKER_RE.match(t):
-        raise HTTPException(400, "Invalid ticker symbol.")
-    return t
 
 
 def _check_rate_limit(ip: str) -> None:
@@ -70,8 +74,27 @@ def _check_rate_limit(ip: str) -> None:
     while window and now - window[0] > 3600:
         window.popleft()
     if len(window) >= settings.rate_limit_per_hour:
-        raise HTTPException(429, "Rate limit reached. Try again later, or look up a ticker someone already ran.")
+        raise AccessDenied("rate_limit", "You've started a lot of analyses in the last hour. Try again a bit later.")
     window.append(now)
+
+
+def _check_invite(code: str | None) -> dict[str, Any] | None:
+    """In invite mode, a fresh analysis needs a valid code with a credit left (not yet charged)."""
+    if settings.access_mode != "invite":
+        return None
+    invite = cache.get_invite(code)
+    if not invite or invite["disabled"]:
+        raise AccessDenied("invite_required", "Stock Council is invite-only right now. Enter your invite code.")
+    if invite["remaining"] <= 0:
+        raise AccessDenied("no_credits", "You've used all the analyses on your invite.")
+    return invite
+
+
+def _ticker(raw: str) -> str:
+    t = raw.strip().upper()
+    if not TICKER_RE.match(t):
+        raise HTTPException(400, "Invalid ticker symbol.")
+    return t
 
 
 def _sse(event: dict[str, Any]) -> str:
@@ -104,6 +127,56 @@ async def search_tickers(q: str = "", limit: int = 8) -> list[dict[str, Any]]:
     return await search.search(q[:60], min(max(limit, 1), 20))
 
 
+# ---------------------------------------------------------------------------
+# Access: credits and what's free to view
+# ---------------------------------------------------------------------------
+
+
+def _public_invite(invite: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not invite:
+        return None
+    return {k: invite[k] for k in ("code", "label", "credits_total", "credits_used", "remaining", "disabled")}
+
+
+@app.get("/api/access")
+async def access(code: str | None = None) -> dict[str, Any]:
+    """What this visitor can do: access mode and, with a code, their credits."""
+    invite = cache.get_invite(code)
+    return {
+        "mode": settings.access_mode,
+        "invite": _public_invite(invite),
+        "valid": bool(invite and not invite["disabled"]),
+    }
+
+
+@app.get("/api/status/{ticker}")
+async def status(ticker: str, code: str | None = None) -> dict[str, Any]:
+    """Would opening this ticker be free (already running or recently analyzed), or cost a credit?"""
+    symbol = _ticker(ticker)
+    if symbol in _live:
+        return {"free": True, "reason": "running"}
+    if cache.get_run(symbol) is not None:
+        return {"free": True, "reason": "cached"}
+    invite = cache.get_invite(code)
+    return {
+        "free": settings.access_mode != "invite",
+        "reason": None,
+        "mode": settings.access_mode,
+        "invite": _public_invite(invite),
+    }
+
+
+@app.get("/api/recent")
+async def recent() -> list[dict[str, Any]]:
+    """Stocks analyzed recently: free for anyone to open."""
+    return cache.recent_runs()
+
+
+# ---------------------------------------------------------------------------
+# Council runs
+# ---------------------------------------------------------------------------
+
+
 class LiveRun:
     """A council run that lives on the server, independent of any one browser tab.
 
@@ -111,8 +184,9 @@ class LiveRun:
     reopening the ticker replays everything so far and follows the rest.
     """
 
-    def __init__(self, symbol: str) -> None:
+    def __init__(self, symbol: str, invite_code: str | None = None) -> None:
         self.symbol = symbol
+        self.invite_code = invite_code
         self.events: list[dict[str, Any]] = []
         self.done = False
         self.changed = asyncio.Condition()
@@ -127,15 +201,26 @@ class LiveRun:
             self.changed.notify_all()
 
     async def drive(self) -> None:
+        tracker = usage.start()  # every Claude call in this run is costed against it
+        started = time.time()
         try:
             async for event in run_council(self.symbol):
                 await self.publish(event)
         except Exception as exc:  # noqa: BLE001 - surface failures to the UI instead of a dead stream
             await self.publish({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
         finally:
-            if self.events and self.events[-1]["type"] == "done":
+            completed = bool(self.events) and self.events[-1]["type"] == "done"
+            if completed:
                 cache.save_run(self.symbol, self.events)
                 cache.record_verdict(self.events[-1]["run"])
+            elif self.invite_code:
+                cache.refund_credit(self.invite_code)  # don't charge for a run that failed
+            try:
+                cache.record_usage(
+                    self.symbol, started, "done" if completed else "failed", self.invite_code, tracker.summary()
+                )
+            except Exception:  # noqa: BLE001 - accounting must never break a run
+                pass
             await self.publish(None)
             _live.pop(self.symbol, None)
 
@@ -156,25 +241,29 @@ _live: dict[str, LiveRun] = {}
 
 
 @app.get("/api/analyze/{ticker}")
-async def analyze(ticker: str, request: Request, refresh: bool = False) -> StreamingResponse:
+async def analyze(ticker: str, request: Request, refresh: bool = False, code: str | None = None) -> StreamingResponse:
     symbol = _ticker(ticker)
     live = _live.get(symbol)
     cached = None if (refresh or live) else cache.get_run(symbol)
-    refusal: str | None = None
+    refusal: AccessDenied | None = None
     if live is None and cached is None:
+        # A fresh run costs money: check the invite, the per-visitor and daily limits, then charge one credit.
         try:
+            invite = _check_invite(code)
             _check_rate_limit(_client_ip(request))
             _check_daily_budget()
-        except HTTPException as exc:
-            # Browsers' EventSource can't read an error status, so send the reason as an event.
-            refusal = str(exc.detail)
+            if invite and not cache.consume_credit(invite["code"]):
+                raise AccessDenied("no_credits", "You've used all the analyses on your invite.")
+        except AccessDenied as exc:
+            refusal = exc
         else:
-            live = _live[symbol] = LiveRun(symbol)
+            live = _live[symbol] = LiveRun(symbol, invite["code"] if invite else None)
             live.task = asyncio.create_task(live.drive())
 
     async def stream() -> AsyncIterator[str]:
         if refusal is not None:
-            yield _sse({"type": "error", "message": refusal})
+            # Browsers' EventSource can't read an error status, so send the reason as an event.
+            yield _sse({"type": "error", "message": refusal.message, "reason": refusal.reason})
             return
         if cached is not None:
             for event in cached:
@@ -187,3 +276,66 @@ async def analyze(ticker: str, request: Request, refresh: bool = False) -> Strea
     return StreamingResponse(
         stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
+
+
+# ---------------------------------------------------------------------------
+# Admin: costs and invite codes (requires ADMIN_KEY)
+# ---------------------------------------------------------------------------
+
+
+def _require_admin(key: str | None) -> None:
+    if not settings.admin_key:
+        raise HTTPException(404, "Admin is disabled (set ADMIN_KEY).")
+    if not key or not hmac.compare_digest(key, settings.admin_key):
+        raise HTTPException(401, "Wrong admin key.")
+
+
+class NewInvite(BaseModel):
+    label: str = Field(default="", max_length=80)
+    credits: int | None = Field(default=None, ge=1, le=10_000)
+
+
+class InviteChange(BaseModel):
+    add_credits: int = Field(default=0, ge=-10_000, le=10_000)
+    disabled: bool | None = None
+
+
+@app.get("/api/admin/stats")
+async def admin_stats(x_admin_key: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_admin(x_admin_key)
+    return {
+        **cache.usage_stats(),
+        "live_runs": list(_live),
+        "runs_started_today": sum(_daily_runs.values()),
+        "settings": {
+            "model": settings.claude_model,
+            "access_mode": settings.access_mode,
+            "max_runs_per_day": settings.max_runs_per_day,
+            "rate_limit_per_hour": settings.rate_limit_per_hour,
+            "cache_ttl_hours": settings.cache_ttl_hours,
+            "default_invite_credits": settings.default_invite_credits,
+        },
+    }
+
+
+@app.get("/api/admin/invites")
+async def admin_list_invites(x_admin_key: str | None = Header(default=None)) -> list[dict[str, Any]]:
+    _require_admin(x_admin_key)
+    return cache.list_invites()
+
+
+@app.post("/api/admin/invites")
+async def admin_create_invite(body: NewInvite, x_admin_key: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_admin(x_admin_key)
+    return cache.create_invite(body.label.strip(), body.credits or settings.default_invite_credits)
+
+
+@app.post("/api/admin/invites/{code}")
+async def admin_update_invite(
+    code: str, body: InviteChange, x_admin_key: str | None = Header(default=None)
+) -> dict[str, Any]:
+    _require_admin(x_admin_key)
+    invite = cache.update_invite(code, add_credits=body.add_credits, disabled=body.disabled)
+    if not invite:
+        raise HTTPException(404, "No such invite code.")
+    return invite

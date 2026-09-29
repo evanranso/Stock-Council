@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
-from .. import scoring
+from .. import scoring, usage
 from ..config import get_settings
 from ..data import _yf, sec
 from ..data.base import in_thread
@@ -93,6 +93,8 @@ async def run_council(ticker: str) -> AsyncIterator[Event]:
     ruling = await debate.judge(ticker, run.analysts, run.bull, run.bear, run.challenge, adjusted, effort)
     run.verdict = scoring.assemble_verdict(adjusted, ruling)
     run.finished_at = datetime.now(UTC)
+    tracker = usage.current()
+    run.usage = tracker.summary() if tracker else None
     yield {"type": "verdict", "verdict": run.verdict.model_dump(mode="json")}
     yield {"type": "done", "run": run.model_dump(mode="json")}
 

@@ -42,6 +42,12 @@ class Settings:
     max_runs_per_day: int = int(os.getenv("MAX_RUNS_PER_DAY", "40"))
     # Behind a hosting proxy (Render, Railway, Fly) the real visitor IP is in X-Forwarded-For.
     trust_proxy: bool = os.getenv("TRUST_PROXY", "false").lower() == "true"
+    # "open": anyone can run fresh analyses (still rate-limited). "invite": fresh analyses need an invite
+    # code with credits left. Viewing a stock someone already ran recently is always free.
+    access_mode: str = os.getenv("ACCESS_MODE", "open").lower()
+    default_invite_credits: int = int(os.getenv("DEFAULT_INVITE_CREDITS", "3"))
+    # Unlocks /api/admin/* (cost stats, invite codes). Leave unset to disable admin endpoints.
+    admin_key: str | None = os.getenv("ADMIN_KEY") or None
     cache_path: str = os.getenv("CACHE_PATH", "stock_council.db")
     cache_ttl_hours: int = int(os.getenv("CACHE_TTL_HOURS", "12"))
 

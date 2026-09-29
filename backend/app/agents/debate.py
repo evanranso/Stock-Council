@@ -99,7 +99,7 @@ async def advocate(side: str, ticker: str, reports: list[AnalystReport], effort:
         f"Ticker: {ticker}\n\n<specialist_reports>\n{render_reports(reports)}\n</specialist_reports>\n\n"
         f"Make the {side} case."
     )
-    return await structured(_advocate_prompt(side), user, CaseReport, effort)
+    return await structured(_advocate_prompt(side), user, CaseReport, effort, label=side)
 
 
 async def challenge(
@@ -110,7 +110,7 @@ async def challenge(
         f"<bull_case>{bull.model_dump_json()}</bull_case>\n\n<bear_case>{bear.model_dump_json()}</bear_case>\n\n"
         "Challenge every lean that doesn't hold up."
     )
-    return await structured(CHALLENGER_PROMPT, user, ChallengeReport, effort)
+    return await structured(CHALLENGER_PROMPT, user, ChallengeReport, effort, label="challenger")
 
 
 def render_scores(scores: dict[Horizon, HorizonScore]) -> str:
@@ -143,4 +143,4 @@ async def judge(
         f"<challenger>{objections.model_dump_json()}</challenger>\n\n"
         f"<formula_scores>\n{render_scores(scores)}\n</formula_scores>\n\nDeliver your ruling."
     )
-    return await structured(JUDGE_PROMPT, user, JudgeRuling, effort)
+    return await structured(JUDGE_PROMPT, user, JudgeRuling, effort, label="judge")

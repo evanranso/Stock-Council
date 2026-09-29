@@ -8,6 +8,7 @@ from typing import TypeVar
 import anthropic
 from pydantic import BaseModel
 
+from .. import usage
 from ..config import get_settings
 
 T = TypeVar("T", bound=BaseModel)
@@ -22,8 +23,8 @@ def client() -> anthropic.AsyncAnthropic:
     return anthropic.AsyncAnthropic()
 
 
-async def structured(system: str, user: str, schema: type[T], effort: str) -> T:
-    """Ask Claude for a response that must validate against `schema`."""
+async def structured(system: str, user: str, schema: type[T], effort: str, label: str = "agent") -> T:
+    """Ask Claude for a response that must validate against `schema`. `label` names the agent in cost logs."""
     settings = get_settings()
     response = await client().beta.messages.parse(
         model=settings.claude_model,
@@ -36,6 +37,8 @@ async def structured(system: str, user: str, schema: type[T], effort: str) -> T:
         betas=["server-side-fallback-2026-07-01"],
         fallbacks="default",
     )
+    # Priced by the model that actually served the call (a refusal fallback can differ).
+    usage.record(label, response.model or settings.claude_model, response.usage)
     if response.stop_reason == "refusal":
         raise AgentError("The model declined this request.")
     if response.stop_reason == "max_tokens":

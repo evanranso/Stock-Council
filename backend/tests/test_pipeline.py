@@ -69,7 +69,7 @@ def fake_world(monkeypatch):
 
         return fetch
 
-    async def fake_structured(system, user, schema, effort):
+    async def fake_structured(system, user, schema, effort, label=None):
         prompts.setdefault(schema.__name__, []).append(user)
         return {AnalystOpinion: OPINION, CaseReport: CASE, ChallengeReport: CHALLENGE, JudgeRuling: RULING}[schema]
 

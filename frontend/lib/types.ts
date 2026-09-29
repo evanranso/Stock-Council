@@ -118,6 +118,6 @@ export type CouncilEvent =
   | { type: "challenge"; challenge: ChallengeReport }
   | { type: "verdict"; verdict: Verdict }
   | { type: "done"; run?: { ticker: string; finished_at?: string; started_at?: string } }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; reason?: string };
 
 export type StoredEvent = CouncilEvent & { cached?: boolean };

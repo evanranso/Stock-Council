@@ -84,3 +84,28 @@ Open the site, enter a ticker, and the council should run. Share links look like
   provider behind the same adapter.
 - **Updates deploy automatically:** pushing to `main` rebuilds both the Render server and the
   Cloudflare site.
+
+---
+
+## Trials: invite codes, credits, and cost tracking
+
+1. **Give the server a persistent disk first.** Invite codes, credits, and cost logs are stored in
+   SQLite. On Render's free plan the disk is wiped on every restart or deploy (and the free server
+   restarts whenever it wakes from sleep), so codes would vanish. In Render → `stock-council-api`:
+   upgrade to **Starter**, then **Disks → Add disk**: mount path `/data`, 1 GB. Then set
+   `CACHE_PATH=/data/stock_council.db` in Environment.
+2. **Set in Render → Environment:**
+   - `ADMIN_KEY` = a long random password (e.g. from a password manager). Never share it.
+   - `ACCESS_MODE` = `invite`
+   - `DEFAULT_INVITE_CREDITS` = `3` (optional; this is the default)
+3. **Open `https://<your-site>/admin`**, sign in with the admin key, and:
+   - Create an invite for yourself with lots of credits (e.g. 500) and open its link, so your own
+     runs don't hit the gate.
+   - Create one invite per tester (label = their name), click **Copy invite link**, and send it.
+4. The admin page shows cost per run (tokens and dollars, per agent), totals for 24h / 7d / all time,
+   and each invite's usage. **+3 credits** tops someone up; **Disable** cuts a code off.
+
+How credits work: one credit = one fresh analysis. Opening a stock anyone analyzed within
+`CACHE_TTL_HOURS`, or a report in your History, is free. A run that fails is refunded automatically.
+Costs are estimates from token counts × list prices in `backend/app/usage.py`; your Anthropic
+console is the source of truth for billing.
