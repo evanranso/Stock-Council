@@ -14,6 +14,11 @@
   color-scheme: dark;
 }
 
+/* Always reserve the scrollbar's space, so the centered header doesn't shift between short and long pages. */
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   @apply bg-[#07080d] text-zinc-100 antialiased;
   background-image:
