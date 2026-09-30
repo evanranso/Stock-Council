@@ -37,6 +37,16 @@ function LoginPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [unconfirmed, setUnconfirmed] = useState(false);
 
+  // Header links (Log in / Sign up free) change ?mode= without remounting this page: follow the URL.
+  useEffect(() => {
+    if (initial === "login" || initial === "signup" || initial === "forgot" || initial === "reset") {
+      setMode(initial);
+      setError(null);
+      setNotice(null);
+      setUnconfirmed(false);
+    }
+  }, [initial]);
+
   // Arriving from a password-reset email: Supabase signs the visitor in for recovery.
   useEffect(() => {
     const { data } = supabase().auth.onAuthStateChange((event) => {

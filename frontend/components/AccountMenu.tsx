@@ -29,7 +29,14 @@ export default function AccountMenu() {
   if (!ready) return <span className="h-7 w-24" />;
 
   if (!session) {
-    const next = typeof window === "undefined" ? "" : `&next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+    // Come back here after logging in; on the login page itself, keep where it was already headed.
+    let next = "";
+    if (typeof window !== "undefined") {
+      const here = window.location.pathname.startsWith("/login")
+        ? new URLSearchParams(window.location.search).get("next")
+        : window.location.pathname + window.location.search;
+      if (here) next = `&next=${encodeURIComponent(here)}`;
+    }
     return (
       <div className="flex items-center gap-1">
         <Link href={`/login?mode=login${next}`} className="rounded-lg px-3 py-1.5 text-zinc-300 hover:bg-white/5 hover:text-white">
