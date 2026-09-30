@@ -20,3 +20,5 @@ See `docs/ARCHITECTURE.md` for the design.
 - Storage goes through `backend/app/db.py` (SQLite locally, Postgres when `DATABASE_URL` is set): use `?`
   placeholders and SQL that runs on both. `PG_TEST_URL=... pytest tests/test_accounts.py` runs the Postgres path.
 - New agent output fields must be optional in `frontend/lib/types.ts` so older saved runs still render.
+- Payments: `backend/app/billing.py`. Credits are granted only from verified Stripe webhooks, once per
+  Stripe object (`payments` table); price → credits mapping is server-side settings, never client input.

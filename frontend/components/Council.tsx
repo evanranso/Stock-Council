@@ -227,7 +227,19 @@ function ConfirmRun({
           <Link href="/" className="rounded-lg border border-white/10 px-5 py-2.5 text-zinc-300 hover:text-white">
             Cancel
           </Link>
-          {credits && <span className="ml-auto text-sm text-zinc-500">{phase.remaining} credits left</span>}
+          {credits && (
+            <span className="ml-auto text-sm text-zinc-500">
+              {phase.remaining} credits left
+              {phase.mode === "accounts" && (
+                <>
+                  {" · "}
+                  <Link href="/pricing" className="text-brand-300 hover:underline">
+                    get more
+                  </Link>
+                </>
+              )}
+            </span>
+          )}
         </div>
         {phase.error && <p className="mt-4 rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{phase.error}</p>}
         {credits && <p className="mt-4 text-xs text-zinc-500">If the analysis fails, the credits are refunded automatically.</p>}
@@ -265,15 +277,18 @@ function Gate({ ticker, reason, onUnlocked }: { ticker: string; reason: string; 
   } else if (reason === "no_credits") {
     title = "You're out of credits";
     body = session
-      ? "Thanks for trying Stock Council! Paid plans are coming soon. Have an invite code? Redeem it for more credits. Stocks analyzed recently and everything in your History stay free to open."
-      : "Thanks for trying it! Paid plans are coming soon. Meanwhile, stocks the council analyzed recently are still free to open, and so is everything in your History.";
+      ? "Get more credits to run fresh analyses. A plan adds credits every month, or buy a one-time pack. Stocks analyzed recently and everything in your History stay free to open."
+      : "Thanks for trying it! Meanwhile, stocks the council analyzed recently are still free to open, and so is everything in your History.";
     actions = session ? (
-      <div className="mt-6 flex flex-wrap gap-3">
-        <Link href="/invite" className={primary}>
-          Redeem a code
+      <div className="mt-6 flex flex-wrap items-center gap-3">
+        <Link href="/pricing" className={primary}>
+          Get more credits
         </Link>
         <Link href="/history" className={secondary}>
           Your history
+        </Link>
+        <Link href="/invite" className="text-sm text-zinc-400 hover:text-white">
+          Have a code?
         </Link>
       </div>
     ) : getCode() ? (

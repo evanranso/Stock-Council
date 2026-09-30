@@ -58,6 +58,21 @@ class Settings:
     default_invite_credits: int = int(os.getenv("DEFAULT_INVITE_CREDITS", "6"))
     # Unlocks /api/admin/* (cost stats, invite codes). Leave unset to disable admin endpoints.
     admin_key: str | None = os.getenv("ADMIN_KEY") or None
+    # Payments (Stripe). Billing is off until STRIPE_SECRET_KEY and at least one price are set.
+    stripe_secret_key: str | None = os.getenv("STRIPE_SECRET_KEY") or None
+    stripe_webhook_secret: str | None = os.getenv("STRIPE_WEBHOOK_SECRET") or None
+    # Price IDs from the Stripe dashboard (price_...). Plus and Pro are monthly subscriptions; Top-up is one-time.
+    stripe_price_plus: str | None = os.getenv("STRIPE_PRICE_PLUS") or None
+    stripe_price_pro: str | None = os.getenv("STRIPE_PRICE_PRO") or None
+    stripe_price_topup: str | None = os.getenv("STRIPE_PRICE_TOPUP") or None
+    # Credits each purchase adds (subscriptions: every month, on each paid invoice).
+    plus_credits: int = int(os.getenv("PLUS_CREDITS", "20"))
+    pro_credits: int = int(os.getenv("PRO_CREDITS", "60"))
+    topup_credits: int = int(os.getenv("TOPUP_CREDITS", "10"))
+    # Public site address, for Stripe's return links. Defaults to the first ALLOWED_ORIGINS entry.
+    site_url: str = (os.getenv("SITE_URL") or _list(os.getenv("ALLOWED_ORIGINS", "http://localhost:3000"))[0]).rstrip(
+        "/"
+    )
     cache_path: str = os.getenv("CACHE_PATH", "stock_council.db")
     cache_ttl_hours: int = int(os.getenv("CACHE_TTL_HOURS", "12"))
 

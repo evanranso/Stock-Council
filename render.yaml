@@ -26,6 +26,18 @@ services:
         sync: false
       - key: ADMIN_EMAILS
         sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_PLUS
+        sync: false
+      - key: STRIPE_PRICE_PRO
+        sync: false
+      - key: STRIPE_PRICE_TOPUP
+        sync: false
+      - key: SITE_URL
+        sync: false
       - key: ALLOWED_ORIGIN_REGEX
         # Cloudflare Workers preview deploys: https://<id>-stock-council.evanranaso.workers.dev
         value: https://.*-stock-council\.evanranaso\.workers\.dev

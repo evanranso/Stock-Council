@@ -50,7 +50,7 @@ def backend(request, monkeypatch):
         db._pool = None
         cache._ready.clear()
         with db.connect() as conn:
-            for t in ("runs", "usage", "invites", "verdicts", "accounts", "redemptions", "saved_runs"):
+            for t in ("runs", "usage", "invites", "verdicts", "accounts", "redemptions", "saved_runs", "payments"):
                 conn.execute(f"DROP TABLE IF EXISTS {t}")
     yield request.param
     if request.param == "postgres":

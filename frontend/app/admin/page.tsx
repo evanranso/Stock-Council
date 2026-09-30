@@ -15,6 +15,20 @@ interface Window {
   input_tokens: number;
   output_tokens: number;
   avg_cost_per_completed_run: number | null;
+  revenue?: number;
+  profit?: number;
+  payments?: number;
+  credits_sold?: number;
+}
+interface Payment {
+  id: string;
+  email: string | null;
+  kind: string;
+  plan: string;
+  credits: number;
+  amount_cents: number;
+  currency: string;
+  created: number;
 }
 interface RunRow {
   ticker: string;
@@ -46,6 +60,7 @@ interface Stats {
   recent_runs: RunRow[];
   live_runs: string[];
   accounts?: number;
+  recent_payments?: Payment[];
   settings: Record<string, string | number>;
 }
 
@@ -162,7 +177,19 @@ export default function AdminPage() {
           ).map(([label, w]) => (
             <div key={label} className="card p-5">
               <div className="text-xs uppercase tracking-wider text-zinc-500">{label}</div>
-              <div className="mt-1 text-3xl font-bold tabular-nums">{usd(w.cost)}</div>
+              <div className="mt-1 flex items-baseline gap-2">
+                <span className="text-3xl font-bold tabular-nums">{usd(w.cost)}</span>
+                <span className="text-xs text-zinc-500">Claude cost</span>
+              </div>
+              {w.revenue !== undefined && (
+                <div className="mt-1 text-sm tabular-nums">
+                  <span className="text-zinc-500">Revenue</span> {usd(w.revenue)}
+                  <span className="text-zinc-600"> · </span>
+                  <span className="text-zinc-500">Profit</span>{" "}
+                  <span className={(w.profit ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}>{usd(w.profit)}</span>
+                  <span className="text-xs text-zinc-500"> ({w.payments} payments)</span>
+                </div>
+              )}
               <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
                 <div>
                   <div className="text-xs text-zinc-500">Fresh runs</div>
@@ -185,6 +212,40 @@ export default function AdminPage() {
       )}
 
       {stats?.settings.access_mode === "accounts" && <AccountManager accounts={accounts} call={call} reload={load} />}
+
+      {stats?.recent_payments && stats.recent_payments.length > 0 && (
+        <section>
+          <h2 className="mb-3 text-lg font-semibold">Recent payments</h2>
+          <div className="card overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs uppercase tracking-wider text-zinc-500">
+                <tr>
+                  {["When", "Who", "What", "Credits", "Amount"].map((h) => (
+                    <th key={h} className="px-4 py-3 font-medium">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {stats.recent_payments.map((p) => (
+                  <tr key={p.id} className="border-t border-white/5">
+                    <td className="px-4 py-2.5 text-zinc-400">{timeAgo(new Date(p.created * 1000).toISOString())}</td>
+                    <td className="max-w-56 truncate px-4 py-2.5">{p.email ?? "—"}</td>
+                    <td className="px-4 py-2.5 capitalize text-zinc-300">
+                      {p.plan} {p.kind === "subscription" ? "(monthly)" : ""}
+                    </td>
+                    <td className="px-4 py-2.5 tabular-nums">{p.credits}</td>
+                    <td className="px-4 py-2.5 font-semibold tabular-nums">
+                      {(p.amount_cents / 100).toFixed(2)} {p.currency.toUpperCase()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       <InviteManager invites={invites} call={call} reload={load} defaultCredits={Number(stats?.settings.default_invite_credits ?? 3)} />
 

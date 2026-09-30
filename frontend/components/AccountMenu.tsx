@@ -77,6 +77,7 @@ export default function AccountMenu() {
               {n ?? "…"} credits left · Quick 1, Standard 2, Deep 3
             </div>
           </div>
+          <MenuLink href="/pricing">{me?.plan && me.plan_status !== "canceled" ? "Plan & credits" : "Buy credits"}</MenuLink>
           <MenuLink href="/history">Your history</MenuLink>
           <MenuLink href="/invite">Redeem a code</MenuLink>
           {me?.is_admin && <MenuLink href="/admin">Admin</MenuLink>}

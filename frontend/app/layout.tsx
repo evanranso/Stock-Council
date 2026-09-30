@@ -33,6 +33,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/history" className="rounded-lg px-3 py-1.5 text-zinc-300 hover:bg-white/5 hover:text-white">
                 History
               </Link>
+              <Link href="/pricing" className="hidden rounded-lg px-3 py-1.5 text-zinc-300 hover:bg-white/5 hover:text-white md:inline-block">
+                Pricing
+              </Link>
               <AccountMenu />
             </nav>
           </div>

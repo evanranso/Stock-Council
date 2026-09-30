@@ -48,6 +48,12 @@ _SCHEMA = [
         events TEXT, UNIQUE (user_id, run_key)
     )""",
     "CREATE INDEX IF NOT EXISTS saved_runs_user ON saved_runs (user_id, created)",
+    # Every Stripe payment that added credits, keyed by the Stripe object (invoice or checkout session),
+    # so a webhook delivered twice can never add credits twice.
+    """CREATE TABLE IF NOT EXISTS payments (
+        id TEXT PRIMARY KEY, user_id TEXT, kind TEXT, plan TEXT, credits INTEGER, amount_cents INTEGER,
+        currency TEXT, created DOUBLE PRECISION
+    )""",
 ]
 
 
@@ -62,6 +68,11 @@ def _db() -> Any:
             db.add_column(conn, "runs", "depth", "TEXT DEFAULT 'deep'")
             db.add_column(conn, "usage", "depth", "TEXT")
             db.add_column(conn, "usage", "user_id", "TEXT")
+            db.add_column(conn, "accounts", "stripe_customer_id", "TEXT")
+            db.add_column(conn, "accounts", "plan", "TEXT")
+            db.add_column(conn, "accounts", "plan_status", "TEXT")
+            db.add_column(conn, "accounts", "subscription_id", "TEXT")
+            db.add_column(conn, "accounts", "plan_renews", "DOUBLE PRECISION")
         _ready.add(key)
     return db.connect()
 
@@ -347,6 +358,10 @@ def _account_view(row: dict[str, Any]) -> dict[str, Any]:
         "remaining": max(0, row["credits_total"] - row["credits_used"]),
         "free_granted": bool(row["free_granted"]),
         "created": row["created"],
+        "plan": row.get("plan"),
+        "plan_status": row.get("plan_status"),
+        "plan_renews": row.get("plan_renews"),
+        "has_billing": bool(row.get("stripe_customer_id")),
     }
 
 
@@ -403,6 +418,75 @@ def list_accounts(limit: int = 200) -> list[dict[str, Any]]:
     with _db() as conn:
         rows = conn.all("SELECT * FROM accounts ORDER BY created DESC LIMIT ?", (limit,))
     return [_account_view(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Payments (Stripe)
+# ---------------------------------------------------------------------------
+
+
+def stripe_customer(user_id: str) -> str | None:
+    with _db() as conn:
+        row = conn.one("SELECT stripe_customer_id FROM accounts WHERE user_id = ?", (user_id,))
+    return row["stripe_customer_id"] if row else None
+
+
+def set_stripe_customer(user_id: str, customer_id: str) -> None:
+    with _db() as conn:
+        conn.execute("UPDATE accounts SET stripe_customer_id = ? WHERE user_id = ?", (customer_id, user_id))
+
+
+def user_for_customer(customer_id: str) -> str | None:
+    with _db() as conn:
+        row = conn.one("SELECT user_id FROM accounts WHERE stripe_customer_id = ?", (customer_id,))
+    return row["user_id"] if row else None
+
+
+def set_subscription(
+    user_id: str, plan: str | None, status: str | None, subscription_id: str | None, renews: float | None
+) -> None:
+    with _db() as conn:
+        conn.execute(
+            "UPDATE accounts SET plan = ?, plan_status = ?, subscription_id = ?, plan_renews = ? WHERE user_id = ?",
+            (plan, status, subscription_id, renews, user_id),
+        )
+
+
+def grant_payment(key: str, user_id: str, kind: str, plan: str, credits: int, amount_cents: int, currency: str) -> bool:
+    """Add a payment's credits exactly once per Stripe object. Returns False if it was already counted."""
+    with _db() as conn:
+        cur = conn.execute(
+            "INSERT INTO payments (id, user_id, kind, plan, credits, amount_cents, currency, created) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING",
+            (key, user_id, kind, plan, credits, amount_cents, currency, time.time()),
+        )
+        if cur.rowcount != 1:
+            return False
+        conn.execute("UPDATE accounts SET credits_total = credits_total + ? WHERE user_id = ?", (credits, user_id))
+    return True
+
+
+def revenue(since: float | None = None) -> dict[str, Any]:
+    with _db() as conn:
+        row = conn.one(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(amount_cents), 0) AS cents, COALESCE(SUM(credits), 0) AS credits "
+            "FROM payments WHERE created >= ?",
+            (since or 0,),
+        ) or {"n": 0, "cents": 0, "credits": 0}
+    return {
+        "payments": int(row["n"]),
+        "revenue": round(int(row["cents"]) / 100, 2),
+        "credits_sold": int(row["credits"]),
+    }
+
+
+def list_payments(limit: int = 50) -> list[dict[str, Any]]:
+    with _db() as conn:
+        return conn.all(
+            "SELECT p.*, a.email FROM payments p LEFT JOIN accounts a ON a.user_id = p.user_id "
+            "ORDER BY p.created DESC LIMIT ?",
+            (limit,),
+        )
 
 
 # ---------------------------------------------------------------------------

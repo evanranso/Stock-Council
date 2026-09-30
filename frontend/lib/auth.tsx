@@ -16,6 +16,10 @@ export interface Me {
   free_granted: boolean;
   is_admin: boolean;
   free_credits: number;
+  plan?: "plus" | "pro" | null;
+  plan_status?: string | null;
+  plan_renews?: number | null;
+  has_billing?: boolean;
 }
 
 interface AuthState {

@@ -124,6 +124,43 @@ opening an invite link) and its credits are added to their account, once per cod
 
 ---
 
+## Payments (Stripe)
+
+Three products: **Plus** and **Pro** (monthly subscriptions that add credits every month) and a
+one-time **Credit pack**. People pay on Stripe's hosted checkout page; credits are added only when
+Stripe's signed webhook confirms the payment, once per invoice or checkout session. Plan changes,
+cancellation, card updates and invoices happen in Stripe's customer portal. Unused credits roll over.
+
+Set it up in **Test mode** first (toggle at the top of the Stripe dashboard):
+
+1. **Product catalog → Add product**, three times:
+   - "Stock Council Plus": recurring, monthly (e.g. $9.99)
+   - "Stock Council Pro": recurring, monthly (e.g. $24.99)
+   - "Stock Council Credit pack": one-off (e.g. $6.00)
+
+   Open each product and copy its **price ID** (`price_...`).
+2. **Developers → API keys:** copy the **Secret key** (`sk_test_...`).
+3. **Developers → Webhooks → Add destination:** endpoint
+   `https://stock-council-api.onrender.com/api/stripe/webhook`, events:
+   `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `invoice.paid`,
+   `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`.
+   Copy its **Signing secret** (`whsec_...`).
+4. **Settings → Billing → Customer portal:** activate it; allow canceling, updating payment
+   methods, and switching between the Plus and Pro prices.
+5. **Render → Environment:** `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PLUS`,
+   `STRIPE_PRICE_PRO`, `STRIPE_PRICE_TOPUP`, and `SITE_URL` (your site, e.g.
+   `https://stock-council.evanranaso.workers.dev`). Optional: `PLUS_CREDITS` (20), `PRO_CREDITS` (60),
+   `TOPUP_CREDITS` (10).
+6. Test on `/pricing` with card `4242 4242 4242 4242`, any future date, any CVC.
+
+**Going live:** switch Stripe to Live mode and repeat steps 1–4 there (live products, live secret
+key, a live webhook with its own signing secret), then replace the five values in Render.
+
+The admin page shows revenue and profit (revenue minus Claude costs) for 24h / 7d / all time, and
+recent payments. To price for profit, compare "Avg cost / run" per depth with what a credit sells for.
+
+---
+
 ## Trials: invite codes, credits, and cost tracking (without accounts)
 
 1. **Give the server a persistent disk first.** Invite codes, credits, and cost logs are stored in

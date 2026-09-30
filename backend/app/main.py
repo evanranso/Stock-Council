@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import cache, search, usage
+from . import billing, cache, search, usage
 from .agents.pipeline import run_council
 from .agents.specialists import SPECIALISTS
 from .auth import User, optional_user, require_user, verify_token
@@ -471,6 +471,53 @@ def import_history(body: ImportBody, user: User = Depends(require_user)) -> dict
 
 
 # ---------------------------------------------------------------------------
+# Billing (Stripe)
+# ---------------------------------------------------------------------------
+
+
+class CheckoutBody(BaseModel):
+    plan: str = Field(max_length=20)
+
+
+def _billing_error(exc: billing.BillingError) -> HTTPException:
+    return HTTPException(exc.status, {"reason": exc.reason, "message": exc.message})
+
+
+@app.get("/api/billing/plans")
+def billing_plans() -> dict[str, Any]:
+    return billing.public_plans()
+
+
+@app.post("/api/billing/checkout")
+def billing_checkout(body: CheckoutBody, user: User = Depends(require_user)) -> dict[str, str]:
+    _account_for(user)
+    _check_rate_limit(f"checkout:{user.id}")
+    try:
+        return {"url": billing.checkout(user.id, user.email, body.plan)}
+    except billing.BillingError as exc:
+        raise _billing_error(exc) from exc
+
+
+@app.post("/api/billing/portal")
+def billing_portal(user: User = Depends(require_user)) -> dict[str, str]:
+    try:
+        return {"url": billing.portal(user.id)}
+    except billing.BillingError as exc:
+        raise _billing_error(exc) from exc
+
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook(request: Request) -> dict[str, str]:
+    payload = await request.body()
+    try:
+        event = billing.parse_webhook(payload, request.headers.get("stripe-signature"))
+    except billing.BillingError as exc:
+        raise _billing_error(exc) from exc
+    outcome = await asyncio.to_thread(billing.handle_event, event)
+    return {"received": event.get("type", ""), "outcome": outcome}
+
+
+# ---------------------------------------------------------------------------
 # Admin: costs and invite codes (requires ADMIN_KEY)
 # ---------------------------------------------------------------------------
 
@@ -496,13 +543,23 @@ class InviteChange(BaseModel):
     disabled: bool | None = None
 
 
+def _with_revenue(stats: dict[str, Any]) -> dict[str, Any]:
+    """Add Stripe revenue and profit (revenue minus Claude costs) to each stats window."""
+    now = time.time()
+    for key, seconds in (("today", 86400), ("last_7_days", 7 * 86400), ("all_time", None)):
+        r = cache.revenue(now - seconds if seconds else None)
+        stats[key] = {**stats[key], **r, "profit": round(r["revenue"] - stats[key]["cost"], 2)}
+    stats["recent_payments"] = cache.list_payments(20)
+    return stats
+
+
 @app.get("/api/admin/stats")
 def admin_stats(
     x_admin_key: str | None = Header(default=None), authorization: str | None = Header(default=None)
 ) -> dict[str, Any]:
     _require_admin(x_admin_key, authorization)
     return {
-        **cache.usage_stats(),
+        **_with_revenue(cache.usage_stats()),
         "live_runs": list(_live),
         "runs_started_today": sum(_daily_runs.values()),
         "settings": {
@@ -514,6 +571,7 @@ def admin_stats(
             "default_invite_credits": settings.default_invite_credits,
             "free_credits": settings.free_credits,
             "free_signups_per_day": settings.free_signups_per_day,
+            "billing": "on" if billing.enabled() else "off",
         },
     }
 
