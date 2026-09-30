@@ -9,6 +9,7 @@ import re
 import time
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -24,7 +25,16 @@ from .config import get_settings
 from .data.registry import ADAPTERS
 from .depth import DEFAULT_DEPTH, all_depths, get_depth
 
-app = FastAPI(title="Stock Council API")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # Load the company list in the background so the first searches are instant.
+    warm = asyncio.create_task(search.ensure_index())
+    yield
+    warm.cancel()
+
+
+app = FastAPI(title="Stock Council API", lifespan=lifespan)
 settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
@@ -126,6 +136,8 @@ async def search_tickers(q: str = "", limit: int = 8) -> list[dict[str, Any]]:
     """Autocomplete: match a ticker or company name ("apple" -> AAPL)."""
     if not q.strip():
         return []
+    if not await search.ensure_index():
+        raise HTTPException(503, "Company search is temporarily unavailable.")
     return await search.search(q[:60], min(max(limit, 1), 20))
 
 

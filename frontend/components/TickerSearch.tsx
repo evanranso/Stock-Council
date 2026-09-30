@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
-import { searchTickers, TICKER_RE, type TickerMatch, warmApi } from "@/lib/api";
+import { SearchUnavailable, searchTickers, TICKER_RE, type TickerMatch, warmApi } from "@/lib/api";
 
 // Type a company name or ticker ("apple" -> AAPL) and pick from the dropdown.
 export default function TickerSearch({ size = "lg", autoFocus = false }: { size?: "lg" | "sm"; autoFocus?: boolean }) {
@@ -15,6 +15,7 @@ export default function TickerSearch({ size = "lg", autoFocus = false }: { size?
   const [active, setActive] = useState(-1);
   const [loading, setLoading] = useState(false);
   const [slow, setSlow] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
     const q = query.trim();
@@ -32,8 +33,13 @@ export default function TickerSearch({ size = "lg", autoFocus = false }: { size?
         const found = await searchTickers(q, ctrl.signal);
         setMatches(found);
         setActive(found.length ? 0 : -1);
-      } catch {
-        /* aborted or offline: keep the last list */
+        setUnavailable(false);
+      } catch (err) {
+        if (err instanceof SearchUnavailable) {
+          setMatches([]);
+          setUnavailable(true);
+        }
+        /* otherwise aborted or offline: keep the last list */
       } finally {
         if (!ctrl.signal.aborted) {
           setLoading(false);
@@ -154,10 +160,10 @@ export default function TickerSearch({ size = "lg", autoFocus = false }: { size?
           ))}
           {!loading && matches.length === 0 && (
             <li className="px-3 py-2 text-sm text-zinc-500">
-              No matches.{" "}
+              {unavailable ? "Company-name search is down for a minute. Type an exact ticker and press Enter." : "No matches."}{" "}
               {TICKER_RE.test(query.trim().toUpperCase()) && (
                 <button className="text-brand-300 hover:underline" onMouseDown={() => go(query.trim().toUpperCase())}>
-                  Analyze “{query.trim().toUpperCase()}” anyway
+                  Analyze “{query.trim().toUpperCase()}”{unavailable ? "" : " anyway"}
                 </button>
               )}
             </li>

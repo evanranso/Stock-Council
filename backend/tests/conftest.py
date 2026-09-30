@@ -2,7 +2,7 @@ import dataclasses
 
 import pytest
 
-from app import cache, db
+from app import cache, db, search
 
 
 @pytest.fixture(autouse=True)
@@ -13,3 +13,13 @@ def temp_db(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "get_settings", lambda: settings)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     return settings
+
+
+@pytest.fixture(autouse=True)
+def no_search_download(monkeypatch):
+    """The server warms the company list on startup; tests never download it."""
+
+    async def empty():
+        return []
+
+    monkeypatch.setattr(search, "ensure_index", empty)
