@@ -87,7 +87,44 @@ Open the site, enter a ticker, and the council should run. Share links look like
 
 ---
 
-## Trials: invite codes, credits, and cost tracking
+## Accounts (Supabase): sign-up, free credits, saved history
+
+Visitors create an account with email + password, verify their email, and get `FREE_CREDITS`
+(default 4 = 2 Standard analyses). Every fresh run is charged to the signed-in account on the
+server; a failed run is refunded. Reports are saved to the account's History. Opening a recently
+analyzed stock stays free for everyone, signed in or not.
+
+**Supabase dashboard (one time):**
+1. **Authentication → Sign In / Providers → Email:** enable, with **Confirm email** on.
+2. **Authentication → URL Configuration:** Site URL = your site (e.g.
+   `https://stock-council.evanranaso.workers.dev`). Redirect URLs: add `https://<your-site>/login**`
+   (and `http://localhost:3000/login**` for local testing).
+3. **Authentication → Attack Protection:** enable CAPTCHA with Cloudflare Turnstile and paste the
+   Turnstile **secret** key there (never in the code or chat). The site key is public and lives in
+   `frontend/lib/supabase.ts`.
+4. **Before launch:** Supabase's built-in email sender only sends a few emails per hour. Set up
+   custom SMTP (e.g. Resend with your own domain) under **Authentication → Emails → SMTP Settings**.
+
+**Render → `stock-council-api` → Environment:**
+- `DATABASE_URL` = Supabase → **Connect** → *Transaction pooler* connection string (with your DB password).
+- `SUPABASE_URL` = `https://<project-ref>.supabase.co`
+- `ADMIN_EMAILS` = your email, so **Admin** appears in your account menu.
+- Remove `ACCESS_MODE` (it defaults to `accounts` once `SUPABASE_URL` is set), or set it to `accounts`.
+- Optional: `FREE_CREDITS` (4), `FREE_SIGNUPS_PER_DAY` (50).
+
+With `DATABASE_URL` set, everything (accounts, credits, history, costs, cache) lives in Supabase, so
+the Render server no longer needs a persistent disk.
+
+The frontend's public Supabase URL, publishable key, and Turnstile site key default to this
+project's values in `frontend/lib/supabase.ts`; override them with `NEXT_PUBLIC_SUPABASE_URL`,
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY` build variables if needed.
+
+Invite codes still work with accounts: a signed-in user redeems one at **Redeem a code** (or by
+opening an invite link) and its credits are added to their account, once per code.
+
+---
+
+## Trials: invite codes, credits, and cost tracking (without accounts)
 
 1. **Give the server a persistent disk first.** Invite codes, credits, and cost logs are stored in
    SQLite. On Render's free plan the disk is wiped on every restart or deploy (and the free server

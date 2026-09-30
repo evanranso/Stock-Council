@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { type Access, CREDITS_EVENT, fetchAccess, getCode, setCode } from "@/lib/access";
+import { authFetch, meChanged, useAuth } from "@/lib/auth";
 
 /** Keeps the header pill and banners in sync with the server's view of this visitor's credits. */
 export function useAccess(): Access | null {
@@ -16,9 +17,38 @@ export function useAccess(): Access | null {
   return access;
 }
 
-/** Picks up ?invite=CODE from an invite link on any page, saves it, and says hello. */
+/** Redeem a code into the signed-in account. Returns a message for the visitor. */
+export async function redeemCode(code: string): Promise<{ ok: boolean; text: string }> {
+  try {
+    const res = await authFetch("/api/me/redeem", { method: "POST", body: JSON.stringify({ code: code.trim().toUpperCase() }) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, text: typeof body.detail === "string" ? body.detail : "That code couldn't be redeemed." };
+    meChanged();
+    return { ok: true, text: `Added ${body.added} ${body.added === 1 ? "credit" : "credits"} to your account. You now have ${body.remaining}.` };
+  } catch {
+    return { ok: false, text: "Couldn't reach the server. Try again in a minute." };
+  }
+}
+
+/** Picks up ?invite=CODE from an invite link on any page, saves it, and says hello.
+ *  With accounts, the code waits in this browser until the visitor signs in, then moves into their account. */
 export function InviteCapture() {
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const { ready, session } = useAuth();
+  const signedIn = !!session;
+  const [captured, setCaptured] = useState(0);
+
+  useEffect(() => {
+    if (!ready || !signedIn) return;
+    const pending = getCode();
+    if (!pending) return;
+    fetchAccess().then((a) => {
+      if (a?.mode !== "accounts") return;
+      setCode(null);
+      redeemCode(pending).then(setMessage);
+    });
+  }, [ready, signedIn, captured]);
+
   useEffect(() => {
     const url = new URL(window.location.href);
     const code = url.searchParams.get("invite");
@@ -26,7 +56,11 @@ export function InviteCapture() {
     url.searchParams.delete("invite");
     window.history.replaceState(null, "", url.toString());
     fetchAccess(code.trim().toUpperCase()).then((a) => {
-      if (a?.valid && a.invite) {
+      if (a?.mode === "accounts" && a.valid && a.invite) {
+        setCode(a.invite.code); // redeemed by the effect above once signed in
+        setCaptured((n) => n + 1);
+        setMessage({ ok: true, text: `Invite code saved: ${a.invite.remaining} bonus credits. Create a free account or log in and they'll be added automatically.` });
+      } else if (a?.valid && a.invite) {
         setCode(a.invite.code);
         setMessage({
           ok: true,

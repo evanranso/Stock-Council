@@ -42,9 +42,19 @@ class Settings:
     max_runs_per_day: int = int(os.getenv("MAX_RUNS_PER_DAY", "40"))
     # Behind a hosting proxy (Render, Railway, Fly) the real visitor IP is in X-Forwarded-For.
     trust_proxy: bool = os.getenv("TRUST_PROXY", "false").lower() == "true"
-    # "open": anyone can run fresh analyses (still rate-limited). "invite": fresh analyses need an invite
-    # code with credits left. Viewing a stock someone already ran recently is always free.
-    access_mode: str = os.getenv("ACCESS_MODE", "open").lower()
+    # Supabase: sign-in tokens are verified against this project's public keys.
+    supabase_url: str | None = (os.getenv("SUPABASE_URL") or "").rstrip("/") or None
+    supabase_jwt_secret: str | None = os.getenv("SUPABASE_JWT_SECRET") or None  # only for legacy HS256 projects
+    # Who may run fresh (paid) analyses. Viewing a stock someone already ran recently is always free.
+    #   "accounts": signed-in, email-verified users spend their credits (default when SUPABASE_URL is set)
+    #   "invite":   legacy invite codes as credit wallets, no sign-in
+    #   "open":     anyone, rate-limited (local development)
+    access_mode: str = (os.getenv("ACCESS_MODE") or ("accounts" if os.getenv("SUPABASE_URL") else "open")).lower()
+    # Credits every new verified account gets once. 4 = two Standard analyses.
+    free_credits: int = int(os.getenv("FREE_CREDITS", "4"))
+    # Safety valve: at most this many accounts get free credits per 24h (0 = no cap).
+    free_signups_per_day: int = int(os.getenv("FREE_SIGNUPS_PER_DAY", "50"))
+    admin_emails: frozenset[str] = frozenset(e.lower() for e in _list(os.getenv("ADMIN_EMAILS", "")))
     default_invite_credits: int = int(os.getenv("DEFAULT_INVITE_CREDITS", "6"))
     # Unlocks /api/admin/* (cost stats, invite codes). Leave unset to disable admin endpoints.
     admin_key: str | None = os.getenv("ADMIN_KEY") or None

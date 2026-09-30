@@ -1,65 +1,85 @@
-"""SQLite storage: cached runs, verdict history, per-run costs, and invite codes.
+"""Storage: cached runs, verdict history, per-run costs, invite codes, accounts, credits, and saved research.
 
-Needs a persistent disk in production (see docs/DEPLOY.md); on a free host with
-a temporary disk, everything here resets whenever the server restarts.
+Uses Postgres (Supabase) when DATABASE_URL is set, otherwise a local SQLite file
+(see db.py). All SQL here runs unchanged on both.
 """
 
 from __future__ import annotations
 
 import json
 import secrets
-import sqlite3
 import time
 from typing import Any
 
+from . import db
 from .config import get_settings
 
 _ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/I, easy to read aloud
+DEPTH_RANK = {"quick": 0, "standard": 1, "deep": 2}
+_ready: set[str] = set()
 
-
-def _conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(get_settings().cache_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("CREATE TABLE IF NOT EXISTS runs (ticker TEXT PRIMARY KEY, created REAL, events TEXT)")
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS usage (
-            ticker TEXT, started REAL, finished REAL, status TEXT, invite_code TEXT,
-            calls INTEGER, input_tokens INTEGER, output_tokens INTEGER, cost_usd REAL, detail TEXT
-        )"""
-    )
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS invites (
-            code TEXT PRIMARY KEY, label TEXT, credits_total INTEGER, credits_used INTEGER DEFAULT 0,
-            created REAL, disabled INTEGER DEFAULT 0
-        )"""
-    )
-    # Columns added after launch: add them to databases created by older versions.
-    _add_column(conn, "runs", "depth", "TEXT DEFAULT 'deep'")
-    _add_column(conn, "usage", "depth", "TEXT")
+_SCHEMA = [
+    "CREATE TABLE IF NOT EXISTS runs (ticker TEXT PRIMARY KEY, created DOUBLE PRECISION, events TEXT)",
+    """CREATE TABLE IF NOT EXISTS usage (
+        ticker TEXT, started DOUBLE PRECISION, finished DOUBLE PRECISION, status TEXT, invite_code TEXT,
+        calls INTEGER, input_tokens INTEGER, output_tokens INTEGER, cost_usd DOUBLE PRECISION, detail TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS invites (
+        code TEXT PRIMARY KEY, label TEXT, credits_total INTEGER, credits_used INTEGER DEFAULT 0,
+        created DOUBLE PRECISION, disabled INTEGER DEFAULT 0
+    )""",
     # Append-only history of every verdict, so the scoring weights can later be
     # checked against what the stock actually did.
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS verdicts (
-            ticker TEXT, created REAL, reference_price REAL, rating TEXT, score REAL, confidence INTEGER,
-            weeks_score REAL, months_score REAL, years_score REAL, run TEXT
-        )"""
-    )
-    return conn
+    """CREATE TABLE IF NOT EXISTS verdicts (
+        ticker TEXT, created DOUBLE PRECISION, reference_price DOUBLE PRECISION, rating TEXT,
+        score DOUBLE PRECISION, confidence INTEGER, weeks_score DOUBLE PRECISION, months_score DOUBLE PRECISION,
+        years_score DOUBLE PRECISION, run TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS accounts (
+        user_id TEXT PRIMARY KEY, email TEXT, credits_total INTEGER DEFAULT 0, credits_used INTEGER DEFAULT 0,
+        free_granted INTEGER DEFAULT 0, created DOUBLE PRECISION
+    )""",
+    """CREATE TABLE IF NOT EXISTS redemptions (
+        user_id TEXT, code TEXT, credits INTEGER, created DOUBLE PRECISION, PRIMARY KEY (user_id, code)
+    )""",
+    """CREATE TABLE IF NOT EXISTS saved_runs (
+        id TEXT PRIMARY KEY, user_id TEXT, run_key TEXT, ticker TEXT, name TEXT, depth TEXT,
+        created DOUBLE PRECISION, rating TEXT, score DOUBLE PRECISION, confidence INTEGER, bottom_line TEXT,
+        events TEXT, UNIQUE (user_id, run_key)
+    )""",
+    "CREATE INDEX IF NOT EXISTS saved_runs_user ON saved_runs (user_id, created)",
+]
 
 
-def _add_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
-    if column not in {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+def _db() -> Any:
+    """A transaction on the configured database, creating/upgrading tables on first use."""
+    key = db.database_url() or get_settings().cache_path
+    if key not in _ready:
+        with db.connect() as conn:
+            for stmt in _SCHEMA:
+                conn.execute(stmt)
+            # Columns added after launch, for databases created by older versions.
+            db.add_column(conn, "runs", "depth", "TEXT DEFAULT 'deep'")
+            db.add_column(conn, "usage", "depth", "TEXT")
+            db.add_column(conn, "usage", "user_id", "TEXT")
+        _ready.add(key)
+    return db.connect()
 
 
-DEPTH_RANK = {"quick": 0, "standard": 1, "deep": 2}
+def _max0(expr: str) -> str:
+    return f"CASE WHEN {expr} < 0 THEN 0 ELSE {expr} END"
+
+
+# ---------------------------------------------------------------------------
+# Cached runs and verdict history
+# ---------------------------------------------------------------------------
 
 
 def record_verdict(run: dict[str, Any]) -> None:
     v = run.get("verdict")
     if not v:
         return
-    with _conn() as conn:
+    with _db() as conn:
         conn.execute(
             "INSERT INTO verdicts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -80,8 +100,8 @@ def record_verdict(run: dict[str, Any]) -> None:
 def get_run(ticker: str, min_depth: str = "quick") -> list[dict[str, Any]] | None:
     """A recent cached run at least as deep as requested (a Deep run can stand in for a Quick request)."""
     ttl = get_settings().cache_ttl_hours * 3600
-    with _conn() as conn:
-        row = conn.execute("SELECT created, events, depth FROM runs WHERE ticker = ?", (ticker,)).fetchone()
+    with _db() as conn:
+        row = conn.one("SELECT created, events, depth FROM runs WHERE ticker = ?", (ticker,))
     if not row or time.time() - row["created"] >= ttl:
         return None
     if DEPTH_RANK.get(row["depth"] or "deep", 2) < DEPTH_RANK.get(min_depth, 0):
@@ -90,32 +110,47 @@ def get_run(ticker: str, min_depth: str = "quick") -> list[dict[str, Any]] | Non
 
 
 def save_run(ticker: str, events: list[dict[str, Any]], depth: str = "deep") -> None:
-    with _conn() as conn:
+    with _db() as conn:
         conn.execute(
-            "REPLACE INTO runs (ticker, created, events, depth) VALUES (?, ?, ?, ?)",
+            "INSERT INTO runs (ticker, created, events, depth) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (ticker) DO UPDATE SET created = excluded.created, events = excluded.events, "
+            "depth = excluded.depth",
             (ticker, time.time(), json.dumps(events), depth),
         )
+
+
+def _summary(events: list[dict[str, Any]]) -> dict[str, Any]:
+    start = next((e for e in events if e.get("type") == "start"), {})
+    verdict = next((e.get("verdict") for e in events if e.get("type") == "verdict"), None) or {}
+    done = next((e.get("run") for e in events if e.get("type") == "done"), None) or {}
+    return {
+        "name": start.get("company_name"),
+        "depth": start.get("depth") or done.get("depth") or "deep",
+        "rating": verdict.get("rating"),
+        "score": verdict.get("score"),
+        "confidence": verdict.get("confidence"),
+        "bottom_line": verdict.get("bottom_line") or verdict.get("summary"),
+        "finished_at": done.get("finished_at") or done.get("started_at"),
+    }
 
 
 def recent_runs(limit: int = 12) -> list[dict[str, Any]]:
     """Tickers with a fresh cached run (free for anyone to view), newest first."""
     cutoff = time.time() - get_settings().cache_ttl_hours * 3600
-    with _conn() as conn:
-        rows = conn.execute(
+    with _db() as conn:
+        rows = conn.all(
             "SELECT ticker, created, events, depth FROM runs WHERE created > ? ORDER BY created DESC LIMIT ?",
             (cutoff, limit),
-        ).fetchall()
+        )
     out = []
     for row in rows:
-        events = json.loads(row["events"])
-        start = next((e for e in events if e.get("type") == "start"), {})
-        verdict = next((e.get("verdict") for e in events if e.get("type") == "verdict"), None) or {}
+        s = _summary(json.loads(row["events"]))
         out.append(
             {
                 "ticker": row["ticker"],
-                "name": start.get("company_name"),
-                "rating": verdict.get("rating"),
-                "score": verdict.get("score"),
+                "name": s["name"],
+                "rating": s["rating"],
+                "score": s["score"],
                 "analyzed_at": row["created"],
                 "depth": row["depth"] or "deep",
             }
@@ -135,11 +170,12 @@ def record_usage(
     invite_code: str | None,
     summary: dict[str, Any],
     depth: str | None = None,
+    user_id: str | None = None,
 ) -> None:
-    with _conn() as conn:
+    with _db() as conn:
         conn.execute(
             "INSERT INTO usage (ticker, started, finished, status, invite_code, calls, input_tokens, output_tokens,"
-            " cost_usd, detail, depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " cost_usd, detail, depth, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ticker,
                 started,
@@ -152,45 +188,53 @@ def record_usage(
                 summary.get("cost_usd", 0.0),
                 json.dumps(summary.get("by_agent", [])),
                 depth,
+                user_id,
             ),
         )
 
 
 def usage_stats(recent: int = 50) -> dict[str, Any]:
     now = time.time()
-    with _conn() as conn:
+    with _db() as conn:
 
         def window(seconds: float | None) -> dict[str, Any]:
             since = now - seconds if seconds else 0
-            row = conn.execute(
-                """SELECT COUNT(*) AS runs, COALESCE(SUM(cost_usd), 0) AS cost,
+            d = (
+                conn.one(
+                    """SELECT COUNT(*) AS runs, COALESCE(SUM(cost_usd), 0) AS cost,
                    COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens,
-                   COALESCE(SUM(status = 'done'), 0) AS completed
+                   COALESCE(SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END), 0) AS completed
                    FROM usage WHERE started >= ?""",
-                (since,),
-            ).fetchone()
-            d = dict(row)
+                    (since,),
+                )
+                or {}
+            )
+            d = {k: (float(v) if k == "cost" else int(v)) for k, v in d.items()}
             d["avg_cost_per_completed_run"] = round(d["cost"] / d["completed"], 4) if d["completed"] else None
             d["cost"] = round(d["cost"], 4)
             return d
 
-        rows = conn.execute(
+        rows = conn.all(
             """SELECT u.ticker, u.started, u.finished, u.status, u.calls, u.input_tokens, u.output_tokens,
-                      u.cost_usd, u.detail, u.depth, i.label AS invite_label
-               FROM usage u LEFT JOIN invites i ON i.code = u.invite_code
+                      u.cost_usd, u.detail, u.depth, i.label AS invite_label, a.email AS user_email
+               FROM usage u
+               LEFT JOIN invites i ON i.code = u.invite_code
+               LEFT JOIN accounts a ON a.user_id = u.user_id
                ORDER BY u.started DESC LIMIT ?""",
             (recent,),
-        ).fetchall()
+        )
+        signups = conn.one("SELECT COUNT(*) AS n FROM accounts") or {"n": 0}
         return {
             "today": window(24 * 3600),
             "last_7_days": window(7 * 24 * 3600),
             "all_time": window(None),
-            "recent_runs": [{**dict(r), "detail": json.loads(r["detail"] or "[]")} for r in rows],
+            "accounts": int(signups["n"]),
+            "recent_runs": [{**r, "detail": json.loads(r["detail"] or "[]")} for r in rows],
         }
 
 
 # ---------------------------------------------------------------------------
-# Invite codes and credits (one credit = one fresh analysis)
+# Invite codes: bonus credits an account can redeem once
 # ---------------------------------------------------------------------------
 
 
@@ -199,9 +243,13 @@ def _new_code() -> str:
     return f"SC-{body[:4]}-{body[4:]}"
 
 
+def normalize_code(code: str | None) -> str | None:
+    return code.strip().upper() if code and code.strip() else None
+
+
 def create_invite(label: str, credits: int) -> dict[str, Any]:
     code = _new_code()
-    with _conn() as conn:
+    with _db() as conn:
         conn.execute(
             "INSERT INTO invites (code, label, credits_total, credits_used, created) VALUES (?, ?, ?, 0, ?)",
             (code, label, credits, time.time()),
@@ -209,33 +257,28 @@ def create_invite(label: str, credits: int) -> dict[str, Any]:
     return get_invite(code) or {}
 
 
-def normalize_code(code: str | None) -> str | None:
-    return code.strip().upper() if code and code.strip() else None
-
-
 def get_invite(code: str | None) -> dict[str, Any] | None:
     code = normalize_code(code)
     if not code:
         return None
-    with _conn() as conn:
-        row = conn.execute("SELECT * FROM invites WHERE code = ?", (code,)).fetchone()
-    if not row:
+    with _db() as conn:
+        d = conn.one("SELECT * FROM invites WHERE code = ?", (code,))
+    if not d:
         return None
-    d = dict(row)
     d["remaining"] = max(0, d["credits_total"] - d["credits_used"])
     d["disabled"] = bool(d["disabled"])
     return d
 
 
 def list_invites() -> list[dict[str, Any]]:
-    with _conn() as conn:
-        rows = conn.execute("SELECT code FROM invites ORDER BY created DESC").fetchall()
+    with _db() as conn:
+        rows = conn.all("SELECT code FROM invites ORDER BY created DESC")
     return [inv for r in rows if (inv := get_invite(r["code"]))]
 
 
 def consume_credit(code: str, amount: int = 1) -> bool:
-    """Atomically use `amount` credits. False if the code is unknown, disabled, or short of credits."""
-    with _conn() as conn:
+    """Atomically use `amount` credits of an invite (legacy invite-code runs)."""
+    with _db() as conn:
         cur = conn.execute(
             "UPDATE invites SET credits_used = credits_used + ? "
             "WHERE code = ? AND disabled = 0 AND credits_used + ? <= credits_total",
@@ -245,20 +288,178 @@ def consume_credit(code: str, amount: int = 1) -> bool:
 
 
 def refund_credit(code: str, amount: int = 1) -> None:
-    with _conn() as conn:
+    with _db() as conn:
         conn.execute(
-            "UPDATE invites SET credits_used = MAX(0, credits_used - ?) WHERE code = ?",
-            (amount, normalize_code(code)),
+            f"UPDATE invites SET credits_used = {_max0('credits_used - ?')} WHERE code = ?",
+            (amount, amount, normalize_code(code)),
         )
 
 
 def update_invite(code: str, *, add_credits: int = 0, disabled: bool | None = None) -> dict[str, Any] | None:
-    with _conn() as conn:
+    with _db() as conn:
         if add_credits:
             conn.execute(
-                "UPDATE invites SET credits_total = MAX(credits_used, credits_total + ?) WHERE code = ?",
-                (add_credits, normalize_code(code)),
+                "UPDATE invites SET credits_total = CASE WHEN credits_total + ? < credits_used "
+                "THEN credits_used ELSE credits_total + ? END WHERE code = ?",
+                (add_credits, add_credits, normalize_code(code)),
             )
         if disabled is not None:
             conn.execute("UPDATE invites SET disabled = ? WHERE code = ?", (int(disabled), normalize_code(code)))
     return get_invite(code)
+
+
+def redeem_invite(user_id: str, code: str) -> tuple[int, str | None]:
+    """Move an invite's remaining credits into an account. Returns (credits added, error message)."""
+    invite = get_invite(code)
+    if not invite or invite["disabled"]:
+        return 0, "That code isn't valid."
+    if invite["remaining"] <= 0:
+        return 0, "That code has already been used."
+    amount = invite["remaining"]
+    with _db() as conn:
+        # Claim the credits only if nobody else did in the meantime.
+        cur = conn.execute(
+            "UPDATE invites SET credits_used = credits_total WHERE code = ? AND credits_used = ?",
+            (invite["code"], invite["credits_used"]),
+        )
+        if cur.rowcount != 1:
+            return 0, "That code has already been used."
+        conn.execute("UPDATE accounts SET credits_total = credits_total + ? WHERE user_id = ?", (amount, user_id))
+        conn.execute(
+            "INSERT INTO redemptions (user_id, code, credits, created) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (user_id, code) DO NOTHING",
+            (user_id, invite["code"], amount, time.time()),
+        )
+    return amount, None
+
+
+# ---------------------------------------------------------------------------
+# Accounts and credits (one account per Supabase user)
+# ---------------------------------------------------------------------------
+
+
+def _account_view(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "user_id": row["user_id"],
+        "email": row["email"],
+        "credits_total": row["credits_total"],
+        "credits_used": row["credits_used"],
+        "remaining": max(0, row["credits_total"] - row["credits_used"]),
+        "free_granted": bool(row["free_granted"]),
+        "created": row["created"],
+    }
+
+
+def get_account(user_id: str) -> dict[str, Any] | None:
+    with _db() as conn:
+        row = conn.one("SELECT * FROM accounts WHERE user_id = ?", (user_id,))
+    return _account_view(row) if row else None
+
+
+def ensure_account(user_id: str, email: str | None, free_credits: int, daily_free_cap: int) -> dict[str, Any]:
+    """Create the account on first sign-in, granting the free credits once (subject to a daily cap)."""
+    existing = get_account(user_id)
+    if existing:
+        return existing
+    now = time.time()
+    with _db() as conn:
+        granted_today = conn.one(
+            "SELECT COUNT(*) AS n FROM accounts WHERE free_granted = 1 AND created >= ?", (now - 86400,)
+        ) or {"n": 0}
+        grant = free_credits if daily_free_cap <= 0 or int(granted_today["n"]) < daily_free_cap else 0
+        conn.execute(
+            "INSERT INTO accounts (user_id, email, credits_total, credits_used, free_granted, created) "
+            "VALUES (?, ?, ?, 0, ?, ?) ON CONFLICT (user_id) DO NOTHING",
+            (user_id, email, grant, 1 if grant else 0, now),
+        )
+    return get_account(user_id) or {}
+
+
+def consume_account_credits(user_id: str, amount: int) -> bool:
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE accounts SET credits_used = credits_used + ? "
+            "WHERE user_id = ? AND credits_used + ? <= credits_total",
+            (amount, user_id, amount),
+        )
+        return cur.rowcount == 1
+
+
+def refund_account_credits(user_id: str, amount: int) -> None:
+    with _db() as conn:
+        conn.execute(
+            f"UPDATE accounts SET credits_used = {_max0('credits_used - ?')} WHERE user_id = ?",
+            (amount, amount, user_id),
+        )
+
+
+def add_account_credits(user_id: str, amount: int) -> dict[str, Any] | None:
+    with _db() as conn:
+        conn.execute("UPDATE accounts SET credits_total = credits_total + ? WHERE user_id = ?", (amount, user_id))
+    return get_account(user_id)
+
+
+def list_accounts(limit: int = 200) -> list[dict[str, Any]]:
+    with _db() as conn:
+        rows = conn.all("SELECT * FROM accounts ORDER BY created DESC LIMIT ?", (limit,))
+    return [_account_view(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Saved research (each account's history of reports)
+# ---------------------------------------------------------------------------
+
+
+def save_for_user(user_id: str, ticker: str, events: list[dict[str, Any]]) -> str | None:
+    s = _summary(events)
+    if s["rating"] is None:
+        return None
+    run_key = f"{ticker}:{s['finished_at'] or ''}"
+    rid = secrets.token_urlsafe(9)
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO saved_runs (id, user_id, run_key, ticker, name, depth, created, rating, score, confidence,"
+            " bottom_line, events) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT (user_id, run_key) DO NOTHING",
+            (
+                rid,
+                user_id,
+                run_key,
+                ticker,
+                s["name"],
+                s["depth"],
+                time.time(),
+                s["rating"],
+                s["score"],
+                s["confidence"],
+                s["bottom_line"],
+                json.dumps(events),
+            ),
+        )
+        row = conn.one("SELECT id FROM saved_runs WHERE user_id = ? AND run_key = ?", (user_id, run_key))
+    return row["id"] if row else None
+
+
+def list_saved(user_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    with _db() as conn:
+        return conn.all(
+            "SELECT id, ticker, name, depth, created, rating, score, confidence, bottom_line FROM saved_runs "
+            "WHERE user_id = ? ORDER BY created DESC LIMIT ?",
+            (user_id, limit),
+        )
+
+
+def get_saved(user_id: str, rid: str) -> dict[str, Any] | None:
+    with _db() as conn:
+        row = conn.one("SELECT * FROM saved_runs WHERE user_id = ? AND id = ?", (user_id, rid))
+    if not row:
+        return None
+    return {**row, "events": json.loads(row["events"])}
+
+
+def delete_saved(user_id: str, rid: str | None = None) -> None:
+    with _db() as conn:
+        if rid:
+            conn.execute("DELETE FROM saved_runs WHERE user_id = ? AND id = ?", (user_id, rid))
+        else:
+            conn.execute("DELETE FROM saved_runs WHERE user_id = ?", (user_id,))

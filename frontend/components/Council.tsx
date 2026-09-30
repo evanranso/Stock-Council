@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { analyzeUrl, creditsChanged, fetchStatus, getCode, type TickerStatus } from "@/lib/access";
+import { type AccessMode, analyzeUrl, creditsChanged, fetchStatus, getCode, type TickerStatus } from "@/lib/access";
+import { authFetch, meChanged, useAuth } from "@/lib/auth";
 import { DEFAULT_DEPTHS, type DepthId, type DepthOption, preferredDepth, savePreferredDepth } from "@/lib/depth";
 import { replay } from "@/lib/council";
 import { clearRunning, markRunning, saveCompleted } from "@/lib/history";
@@ -15,8 +16,9 @@ import Report from "./Report";
 
 type Phase =
   | { kind: "checking" }
-  | { kind: "confirm"; mode: "open" | "invite"; remaining?: number; depths: DepthOption[] }
+  | { kind: "confirm"; mode: AccessMode; remaining?: number; depths: DepthOption[]; error?: string }
   | { kind: "gate"; reason: string }
+  | { kind: "starting" }
   | { kind: "stream" };
 
 // Live analysis: checks whether this is free or costs credits, lets the visitor pick a depth,
@@ -27,9 +29,12 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const state = useMemo(() => replay(ticker, events), [ticker, events]);
   const saved = useRef(false);
+  const { ready, session } = useAuth();
+  const signedIn = !!session;
 
   // 1. Is opening this ticker free (running, or recently analyzed at least this deep)? If not, ask first.
   useEffect(() => {
+    if (!ready) return; // wait until we know whether this visitor is signed in
     let cancelled = false;
     const wanted = requestedDepth ?? preferredDepth();
     setDepth(wanted);
@@ -38,10 +43,16 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
       if (cancelled) return;
       if (!s || s.free) return setPhase({ kind: "stream" }); // server unreachable: let the stream report it
       const depths = s.depths?.length ? s.depths : DEFAULT_DEPTHS;
+      const cheapest = Math.min(...depths.map((d) => d.credits));
+      if (s.mode === "accounts") {
+        if (!s.signed_in) return setPhase({ kind: "gate", reason: "sign_in" });
+        if ((s.remaining ?? 0) < cheapest) return setPhase({ kind: "gate", reason: "no_credits" });
+        return setPhase({ kind: "confirm", mode: "accounts", remaining: s.remaining ?? 0, depths });
+      }
       if (s.mode === "invite") {
         const inv = s.invite;
         if (!inv || inv.disabled) return setPhase({ kind: "gate", reason: "invite_required" });
-        if (inv.remaining < Math.min(...depths.map((d) => d.credits))) return setPhase({ kind: "gate", reason: "no_credits" });
+        if (inv.remaining < cheapest) return setPhase({ kind: "gate", reason: "no_credits" });
         return setPhase({ kind: "confirm", mode: "invite", remaining: inv.remaining, depths });
       }
       setPhase({ kind: "confirm", mode: "open", depths });
@@ -49,7 +60,7 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
     return () => {
       cancelled = true;
     };
-  }, [ticker, requestedDepth]);
+  }, [ticker, requestedDepth, ready, signedIn]);
 
   // 2. Stream the council.
   useEffect(() => {
@@ -62,7 +73,7 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
 
     source.onmessage = (msg) => {
       const event = JSON.parse(msg.data) as StoredEvent;
-      if (event.type === "error" && event.reason && ["invite_required", "no_credits"].includes(event.reason)) {
+      if (event.type === "error" && event.reason && ["invite_required", "no_credits", "sign_in"].includes(event.reason)) {
         finished = true;
         source.close();
         setPhase({ kind: "gate", reason: event.reason });
@@ -71,16 +82,24 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
       received.push(event);
       setEvents([...received]);
       if (event.type === "start" && !event.cached) {
-        markRunning(ticker, event.company_name);
+        if (!signedIn) markRunning(ticker, event.company_name);
         creditsChanged();
       }
       if (event.type === "done" || event.type === "error") {
         finished = true;
         source.close();
         creditsChanged(); // a failed run is refunded server-side
+        if (signedIn) meChanged();
         if (event.type === "done" && !saved.current) {
           saved.current = true;
-          saveCompleted(ticker, received);
+          if (signedIn) {
+            // Keep it in this account's history (a no-op if the server already saved it for us).
+            const start = received.find((e) => e.type === "start");
+            const runDepth = start && start.type === "start" ? start.depth : depth;
+            authFetch("/api/me/history/save", { method: "POST", body: JSON.stringify({ ticker, depth: runDepth }) }).catch(() => undefined);
+          } else {
+            saveCompleted(ticker, received);
+          }
         }
         if (event.type === "error") clearRunning(ticker);
       }
@@ -94,19 +113,41 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
       }
     };
     return () => source.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticker, phase.kind, depth]);
 
-  if (phase.kind === "checking") return <div className="card h-40 animate-pulse" />;
+  // Signed-in accounts: charge and start the run on the server first (EventSource can't send a token), then follow it.
+  async function startAccountRun(d: DepthId, depths: DepthOption[], remaining?: number) {
+    setPhase({ kind: "starting" });
+    try {
+      const res = await authFetch(`/api/analyze/${encodeURIComponent(ticker)}/start?depth=${d}`, { method: "POST" });
+      if (res.ok) {
+        meChanged();
+        return setPhase({ kind: "stream" });
+      }
+      const body = await res.json().catch(() => ({}));
+      const reason = body?.detail?.reason;
+      if (res.status === 401 || res.status === 403) return setPhase({ kind: "gate", reason: res.status === 403 ? "verify_email" : "sign_in" });
+      if (reason === "no_credits") return setPhase({ kind: "gate", reason: "no_credits" });
+      const message = body?.detail?.message ?? (typeof body?.detail === "string" ? body.detail : "Couldn't start the analysis. Try again in a minute.");
+      setPhase({ kind: "confirm", mode: "accounts", depths, remaining, error: message });
+    } catch {
+      setPhase({ kind: "confirm", mode: "accounts", depths, remaining, error: "Couldn't reach the server. Try again in a minute." });
+    }
+  }
+
+  if (phase.kind === "checking" || phase.kind === "starting") return <div className="card h-40 animate-pulse" />;
   if (phase.kind === "confirm")
     return (
       <ConfirmRun
         ticker={ticker}
         phase={phase}
         initial={depth}
-        onRun={(d) => {
+        onRun={(d, free) => {
           savePreferredDepth(d);
           setDepth(d);
-          setPhase({ kind: "stream" });
+          if (phase.mode === "accounts" && !free) startAccountRun(d, phase.depths, phase.remaining);
+          else setPhase({ kind: "stream" });
         }}
       />
     );
@@ -137,9 +178,9 @@ function ConfirmRun({
   ticker: string;
   phase: Extract<Phase, { kind: "confirm" }>;
   initial: DepthId;
-  onRun: (d: DepthId) => void;
+  onRun: (d: DepthId, free: boolean) => void;
 }) {
-  const credits = phase.mode === "invite";
+  const credits = phase.mode === "invite" || phase.mode === "accounts";
   const affordable = (d: DepthOption) => !credits || (phase.remaining ?? 0) >= d.credits;
   const start = phase.depths.find((d) => d.id === initial && affordable(d)) ?? [...phase.depths].reverse().find(affordable) ?? phase.depths[0];
   const [choice, setChoice] = useState<DepthId>(start.id);
@@ -167,7 +208,7 @@ function ConfirmRun({
           <DepthPicker options={phase.depths} value={choice} onChange={setChoice} showCredits={credits} remaining={phase.remaining} freeDepths={freeDepths} />
         </div>
         <div className="mt-6 flex flex-wrap items-center gap-3">
-          <button onClick={() => onRun(chosen.id)} className="rounded-lg bg-gradient-to-r from-brand-500 to-accent-500 px-5 py-2.5 font-semibold text-white shadow-lg shadow-brand-500/25 hover:brightness-110">
+          <button onClick={() => onRun(chosen.id, isFree)} className="rounded-lg bg-gradient-to-r from-brand-500 to-accent-500 px-5 py-2.5 font-semibold text-white shadow-lg shadow-brand-500/25 hover:brightness-110">
             {isFree ? `Open ${chosen.label} analysis (free)` : `Run ${chosen.label} analysis${credits ? ` · ${chosen.credits} ${chosen.credits === 1 ? "credit" : "credits"}` : ""}`}
           </button>
           <Link href="/" className="rounded-lg border border-white/10 px-5 py-2.5 text-zinc-300 hover:text-white">
@@ -175,6 +216,7 @@ function ConfirmRun({
           </Link>
           {credits && <span className="ml-auto text-sm text-zinc-500">{phase.remaining} credits left</span>}
         </div>
+        {phase.error && <p className="mt-4 rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{phase.error}</p>}
         {credits && <p className="mt-4 text-xs text-zinc-500">If the analysis fails, the credits are refunded automatically.</p>}
       </div>
       <FreeToView narrow />
@@ -183,27 +225,66 @@ function ConfirmRun({
 }
 
 function Gate({ ticker, reason, onUnlocked }: { ticker: string; reason: string; onUnlocked: () => void }) {
-  const outOfCredits = reason === "no_credits";
+  const { session, me } = useAuth();
+  const next = encodeURIComponent(`/analyze?t=${ticker}`);
+  const primary = "rounded-lg bg-gradient-to-r from-brand-500 to-accent-500 px-5 py-2.5 font-semibold text-white shadow-lg shadow-brand-500/25 hover:brightness-110";
+  const secondary = "rounded-lg border border-white/10 px-5 py-2.5 text-zinc-300 hover:text-white";
+
+  let title: string;
+  let body: React.ReactNode;
+  let actions: React.ReactNode = null;
+  if (reason === "sign_in") {
+    title = "Create a free account to run this analysis";
+    body = `New accounts get ${me?.free_credits ?? 4} free credits: that's 2 Standard analyses. Just verify your email. Stocks the council analyzed recently stay free to open without an account.`;
+    actions = (
+      <div className="mt-6 flex flex-wrap gap-3">
+        <Link href={`/login?mode=signup&next=${next}`} className={primary}>
+          Sign up free
+        </Link>
+        <Link href={`/login?next=${next}`} className={secondary}>
+          Log in
+        </Link>
+      </div>
+    );
+  } else if (reason === "verify_email") {
+    title = "Verify your email first";
+    body = "Open the link we emailed you, then come back to this page. Check your spam folder if you don't see it.";
+  } else if (reason === "no_credits") {
+    title = "You're out of credits";
+    body = session
+      ? "Thanks for trying Stock Council! Paid plans are coming soon. Have an invite code? Redeem it for more credits. Stocks analyzed recently and everything in your History stay free to open."
+      : "Thanks for trying it! Paid plans are coming soon. Meanwhile, stocks the council analyzed recently are still free to open, and so is everything in your History.";
+    actions = session ? (
+      <div className="mt-6 flex flex-wrap gap-3">
+        <Link href="/invite" className={primary}>
+          Redeem a code
+        </Link>
+        <Link href="/history" className={secondary}>
+          Your history
+        </Link>
+      </div>
+    ) : getCode() ? (
+      <Link href="/invite" className="mt-4 inline-block text-sm text-brand-300 hover:underline">
+        Have another code?
+      </Link>
+    ) : null;
+  } else {
+    title = "Stock Council is invite-only for now";
+    body = "Enter your invite code to run a fresh analysis. Stocks the council analyzed recently are free to open without one.";
+    actions = (
+      <div className="mt-5">
+        <InviteForm onDone={onUnlocked} />
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-xl space-y-6">
       <div className="card fade-up p-6 sm:p-8">
         <p className="text-sm text-brand-300">{ticker}</p>
-        <h1 className="mt-1 text-2xl font-bold">{outOfCredits ? "You're out of credits" : "Stock Council is invite-only for now"}</h1>
-        <p className="mt-2 text-zinc-400">
-          {outOfCredits
-            ? "Thanks for trying it! Paid plans are coming soon. Meanwhile, stocks the council analyzed recently are still free to open, and so is everything in your History."
-            : "Enter your invite code to run a fresh analysis. Stocks the council analyzed recently are free to open without one."}
-        </p>
-        {!outOfCredits && (
-          <div className="mt-5">
-            <InviteForm onDone={onUnlocked} />
-          </div>
-        )}
-        {outOfCredits && getCode() && (
-          <Link href="/invite" className="mt-4 inline-block text-sm text-brand-300 hover:underline">
-            Have another code?
-          </Link>
-        )}
+        <h1 className="mt-1 text-2xl font-bold">{title}</h1>
+        <p className="mt-2 text-zinc-400">{body}</p>
+        {actions}
       </div>
       <FreeToView narrow />
     </div>

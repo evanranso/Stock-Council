@@ -11,7 +11,7 @@ from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from . import cache, search, usage
 from .agents.pipeline import run_council
 from .agents.specialists import SPECIALISTS
+from .auth import User, optional_user, require_user, verify_token
 from .config import get_settings
 from .data.registry import ADAPTERS
 from .depth import DEFAULT_DEPTH, all_depths, get_depth
@@ -29,8 +30,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
     allow_origin_regex=settings.allowed_origin_regex,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-Admin-Key"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "X-Admin-Key", "Authorization"],
 )
 
 TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
@@ -149,11 +150,18 @@ async def access(code: str | None = None) -> dict[str, Any]:
         "valid": bool(invite and not invite["disabled"]),
         "depths": [d.public() for d in all_depths()],
         "default_depth": DEFAULT_DEPTH,
+        "free_credits": settings.free_credits,
     }
 
 
+def _account_for(user: User) -> dict[str, Any]:
+    return cache.ensure_account(user.id, user.email, settings.free_credits, settings.free_signups_per_day)
+
+
 @app.get("/api/status/{ticker}")
-async def status(ticker: str, code: str | None = None, depth: str | None = None) -> dict[str, Any]:
+async def status(
+    ticker: str, code: str | None = None, depth: str | None = None, user: User | None = Depends(optional_user)
+) -> dict[str, Any]:
     """Would opening this ticker at this depth be free (running, or recently analyzed at least this deep)?"""
     symbol = _ticker(ticker)
     profile = get_depth(depth)
@@ -162,11 +170,14 @@ async def status(ticker: str, code: str | None = None, depth: str | None = None)
     if cache.get_run(symbol, profile.id) is not None:
         return {"free": True, "reason": "cached"}
     invite = cache.get_invite(code)
+    account = _account_for(user) if user else None
     return {
         "free": False,
         "reason": None,
         "mode": settings.access_mode,
         "invite": _public_invite(invite),
+        "signed_in": user is not None,
+        "remaining": account["remaining"] if account else None,
         "depths": [d.public() for d in all_depths()],
     }
 
@@ -190,10 +201,16 @@ class LiveRun:
     """
 
     def __init__(
-        self, symbol: str, invite_code: str | None = None, depth: str = DEFAULT_DEPTH, credits: int = 0
+        self,
+        symbol: str,
+        invite_code: str | None = None,
+        depth: str = DEFAULT_DEPTH,
+        credits: int = 0,
+        user_id: str | None = None,
     ) -> None:
         self.symbol = symbol
         self.invite_code = invite_code
+        self.user_id = user_id
         self.depth = depth
         self.credits = credits
         self.events: list[dict[str, Any]] = []
@@ -219,11 +236,18 @@ class LiveRun:
             await self.publish({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
         finally:
             completed = bool(self.events) and self.events[-1]["type"] == "done"
-            if completed:
-                cache.save_run(self.symbol, self.events, self.depth)
-                cache.record_verdict(self.events[-1]["run"])
-            elif self.invite_code:
-                cache.refund_credit(self.invite_code, self.credits)  # don't charge for a run that failed
+            try:
+                if completed:
+                    cache.save_run(self.symbol, self.events, self.depth)
+                    cache.record_verdict(self.events[-1]["run"])
+                    if self.user_id:
+                        cache.save_for_user(self.user_id, self.symbol, self.events)
+                elif self.invite_code:
+                    cache.refund_credit(self.invite_code, self.credits)  # don't charge for a run that failed
+                elif self.user_id and self.credits:
+                    cache.refund_account_credits(self.user_id, self.credits)
+            except Exception:  # noqa: BLE001 - storage hiccups must not leave followers hanging
+                pass
             try:
                 cache.record_usage(
                     self.symbol,
@@ -232,6 +256,7 @@ class LiveRun:
                     self.invite_code,
                     tracker.summary(),
                     self.depth,
+                    self.user_id,
                 )
             except Exception:  # noqa: BLE001 - accounting must never break a run
                 pass
@@ -263,7 +288,10 @@ async def analyze(
     live = _live.get(symbol)
     cached = None if (refresh or live) else cache.get_run(symbol, profile.id)
     refusal: AccessDenied | None = None
-    if live is None and cached is None:
+    if live is None and cached is None and settings.access_mode == "accounts":
+        # With accounts, fresh runs start only through POST /api/analyze/{ticker}/start (signed in).
+        refusal = AccessDenied("sign_in", "Sign in to run a fresh analysis.")
+    elif live is None and cached is None:
         # A fresh run costs money: check the invite, the per-visitor and daily limits, then charge its credits.
         try:
             invite = _check_invite(code, profile.credits)
@@ -296,16 +324,127 @@ async def analyze(
     )
 
 
+@app.post("/api/analyze/{ticker}/start")
+async def start_analysis(
+    ticker: str, request: Request, depth: str | None = None, user: User = Depends(require_user)
+) -> dict[str, Any]:
+    """Start a fresh, paid run for a signed-in user (or report that it's already running / cached)."""
+    symbol = _ticker(ticker)
+    profile = get_depth(depth)
+    if symbol in _live:
+        return {"state": "running", "depth": _live[symbol].depth}
+    if cache.get_run(symbol, profile.id) is not None:
+        return {"state": "cached"}
+    account = _account_for(user)
+    try:
+        if account["remaining"] < profile.credits:
+            raise AccessDenied("no_credits", "You don't have enough credits for this depth.")
+        _check_rate_limit(f"user:{user.id}")
+        _check_rate_limit(_client_ip(request))
+        _check_daily_budget()
+        if not cache.consume_account_credits(user.id, profile.credits):
+            raise AccessDenied("no_credits", "You don't have enough credits for this depth.")
+    except AccessDenied as exc:
+        raise HTTPException(
+            402 if exc.reason == "no_credits" else 429, {"reason": exc.reason, "message": exc.message}
+        ) from exc
+    live = _live[symbol] = LiveRun(symbol, None, profile.id, profile.credits, user.id)
+    live.task = asyncio.create_task(live.drive())
+    return {"state": "started", "depth": profile.id, "remaining": account["remaining"] - profile.credits}
+
+
+# ---------------------------------------------------------------------------
+# Signed-in user: account, credits, saved research
+# ---------------------------------------------------------------------------
+
+
+class Redeem(BaseModel):
+    code: str = Field(min_length=4, max_length=40)
+
+
+class SaveCached(BaseModel):
+    ticker: str
+    depth: str | None = None
+
+
+class ImportEntry(BaseModel):
+    ticker: str
+    events: list[dict[str, Any]] = Field(max_length=200)
+
+
+class ImportBody(BaseModel):
+    entries: list[ImportEntry] = Field(max_length=25)
+
+
+@app.get("/api/me")
+async def me(user: User = Depends(require_user)) -> dict[str, Any]:
+    account = _account_for(user)
+    return {**account, "is_admin": user.is_admin, "free_credits": settings.free_credits}
+
+
+@app.post("/api/me/redeem")
+async def redeem(body: Redeem, user: User = Depends(require_user)) -> dict[str, Any]:
+    _account_for(user)
+    added, error = cache.redeem_invite(user.id, body.code)
+    if error:
+        raise HTTPException(400, error)
+    return {"added": added, **(cache.get_account(user.id) or {})}
+
+
+@app.get("/api/me/history")
+async def my_history(user: User = Depends(require_user)) -> list[dict[str, Any]]:
+    return cache.list_saved(user.id)
+
+
+@app.get("/api/me/history/{rid}")
+async def my_saved_run(rid: str, user: User = Depends(require_user)) -> dict[str, Any]:
+    run = cache.get_saved(user.id, rid)
+    if not run:
+        raise HTTPException(404, "Not found.")
+    return run
+
+
+@app.delete("/api/me/history/{rid}")
+async def delete_my_run(rid: str, user: User = Depends(require_user)) -> dict[str, bool]:
+    cache.delete_saved(user.id, None if rid == "all" else rid)
+    return {"ok": True}
+
+
+@app.post("/api/me/history/save")
+async def save_cached_for_me(body: SaveCached, user: User = Depends(require_user)) -> dict[str, Any]:
+    """Keep a copy of a recently analyzed (cached) stock in this account's history."""
+    events = cache.get_run(_ticker(body.ticker), get_depth(body.depth).id if body.depth else "quick")
+    if not events:
+        raise HTTPException(404, "No recent analysis to save.")
+    return {"id": cache.save_for_user(user.id, _ticker(body.ticker), events)}
+
+
+@app.post("/api/me/history/import")
+async def import_history(body: ImportBody, user: User = Depends(require_user)) -> dict[str, int]:
+    """Move reports saved in this browser (before signing in) into the account."""
+    saved = 0
+    for entry in body.entries:
+        if len(json.dumps(entry.events)) > 2_000_000:
+            continue
+        if cache.save_for_user(user.id, _ticker(entry.ticker), entry.events):
+            saved += 1
+    return {"imported": saved}
+
+
 # ---------------------------------------------------------------------------
 # Admin: costs and invite codes (requires ADMIN_KEY)
 # ---------------------------------------------------------------------------
 
 
-def _require_admin(key: str | None) -> None:
-    if not settings.admin_key:
-        raise HTTPException(404, "Admin is disabled (set ADMIN_KEY).")
-    if not key or not hmac.compare_digest(key, settings.admin_key):
-        raise HTTPException(401, "Wrong admin key.")
+def _require_admin(key: str | None, authorization: str | None = None) -> None:
+    """Admin = the ADMIN_KEY header, or a signed-in user whose email is in ADMIN_EMAILS."""
+    if key and settings.admin_key and hmac.compare_digest(key, settings.admin_key):
+        return
+    if authorization and authorization.lower().startswith("bearer ") and verify_token(authorization[7:]).is_admin:
+        return
+    if not settings.admin_key and not settings.admin_emails:
+        raise HTTPException(404, "Admin is disabled (set ADMIN_KEY or ADMIN_EMAILS).")
+    raise HTTPException(401, "Not an admin.")
 
 
 class NewInvite(BaseModel):
@@ -319,8 +458,10 @@ class InviteChange(BaseModel):
 
 
 @app.get("/api/admin/stats")
-async def admin_stats(x_admin_key: str | None = Header(default=None)) -> dict[str, Any]:
-    _require_admin(x_admin_key)
+async def admin_stats(
+    x_admin_key: str | None = Header(default=None), authorization: str | None = Header(default=None)
+) -> dict[str, Any]:
+    _require_admin(x_admin_key, authorization)
     return {
         **cache.usage_stats(),
         "live_runs": list(_live),
@@ -332,28 +473,63 @@ async def admin_stats(x_admin_key: str | None = Header(default=None)) -> dict[st
             "rate_limit_per_hour": settings.rate_limit_per_hour,
             "cache_ttl_hours": settings.cache_ttl_hours,
             "default_invite_credits": settings.default_invite_credits,
+            "free_credits": settings.free_credits,
+            "free_signups_per_day": settings.free_signups_per_day,
         },
     }
 
 
 @app.get("/api/admin/invites")
-async def admin_list_invites(x_admin_key: str | None = Header(default=None)) -> list[dict[str, Any]]:
-    _require_admin(x_admin_key)
+async def admin_list_invites(
+    x_admin_key: str | None = Header(default=None), authorization: str | None = Header(default=None)
+) -> list[dict[str, Any]]:
+    _require_admin(x_admin_key, authorization)
     return cache.list_invites()
 
 
 @app.post("/api/admin/invites")
-async def admin_create_invite(body: NewInvite, x_admin_key: str | None = Header(default=None)) -> dict[str, Any]:
-    _require_admin(x_admin_key)
+async def admin_create_invite(
+    body: NewInvite, x_admin_key: str | None = Header(default=None), authorization: str | None = Header(default=None)
+) -> dict[str, Any]:
+    _require_admin(x_admin_key, authorization)
     return cache.create_invite(body.label.strip(), body.credits or settings.default_invite_credits)
 
 
 @app.post("/api/admin/invites/{code}")
 async def admin_update_invite(
-    code: str, body: InviteChange, x_admin_key: str | None = Header(default=None)
+    code: str,
+    body: InviteChange,
+    x_admin_key: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    _require_admin(x_admin_key)
+    _require_admin(x_admin_key, authorization)
     invite = cache.update_invite(code, add_credits=body.add_credits, disabled=body.disabled)
     if not invite:
         raise HTTPException(404, "No such invite code.")
     return invite
+
+
+class CreditChange(BaseModel):
+    add: int = Field(ge=-10_000, le=10_000)
+
+
+@app.get("/api/admin/accounts")
+async def admin_accounts(
+    x_admin_key: str | None = Header(default=None), authorization: str | None = Header(default=None)
+) -> list[dict[str, Any]]:
+    _require_admin(x_admin_key, authorization)
+    return cache.list_accounts()
+
+
+@app.post("/api/admin/accounts/{user_id}/credits")
+async def admin_account_credits(
+    user_id: str,
+    body: CreditChange,
+    x_admin_key: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_admin(x_admin_key, authorization)
+    account = cache.add_account_credits(user_id, body.add)
+    if not account:
+        raise HTTPException(404, "No such account.")
+    return account

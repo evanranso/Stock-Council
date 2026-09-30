@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CreditPill, InviteCapture } from "@/components/AccessWidgets";
+import { InviteCapture } from "@/components/AccessWidgets";
+import AccountMenu from "@/components/AccountMenu";
 import HeaderSearch from "@/components/HeaderSearch";
+import { AuthProvider } from "@/lib/auth";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,6 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
+        <AuthProvider>
         <InviteCapture />
         <header className="sticky top-0 z-30 border-b border-white/10 bg-[#07080d]/80 backdrop-blur-md">
           <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
@@ -24,13 +27,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </Link>
             <HeaderSearch />
             <nav className="ml-auto flex items-center gap-1 text-sm">
-              <CreditPill />
-              <Link href="/" className="rounded-lg px-3 py-1.5 text-zinc-300 hover:bg-white/5 hover:text-white">
+              <Link href="/" className="hidden rounded-lg px-3 py-1.5 text-zinc-300 sm:inline-block hover:bg-white/5 hover:text-white">
                 Analyze
               </Link>
               <Link href="/history" className="rounded-lg px-3 py-1.5 text-zinc-300 hover:bg-white/5 hover:text-white">
                 History
               </Link>
+              <AccountMenu />
             </nav>
           </div>
         </header>
@@ -38,6 +41,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <footer className="mx-auto max-w-6xl px-4 pb-10 text-xs text-zinc-600">
           AI-generated research from public data. Not investment advice. Data can be delayed or incomplete.
         </footer>
+        </AuthProvider>
       </body>
     </html>
   );

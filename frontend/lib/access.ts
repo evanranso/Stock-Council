@@ -1,5 +1,6 @@
 // Invite codes and credits. The code lives in this browser; the server is the source of truth for credits.
 import { API } from "./api";
+import { authFetch } from "./auth";
 import type { DepthId, DepthOption } from "./depth";
 import type { Rating } from "./types";
 
@@ -14,18 +15,22 @@ export interface Invite {
   remaining: number;
   disabled: boolean;
 }
+export type AccessMode = "open" | "invite" | "accounts";
 export interface Access {
-  mode: "open" | "invite";
+  mode: AccessMode;
   invite: Invite | null;
   valid: boolean;
   depths?: DepthOption[];
   default_depth?: DepthId;
+  free_credits?: number;
 }
 export interface TickerStatus {
   free: boolean;
   reason: "running" | "cached" | null;
-  mode?: "open" | "invite";
+  mode?: AccessMode;
   invite?: Invite | null;
+  signed_in?: boolean;
+  remaining?: number | null;
   depth?: DepthId;
   depths?: DepthOption[];
 }
@@ -75,7 +80,8 @@ export async function fetchAccess(code = getCode()): Promise<Access | null> {
 
 export async function fetchStatus(ticker: string, depth: DepthId, code = getCode()): Promise<TickerStatus | null> {
   try {
-    const res = await fetch(withCode(`${API}/api/status/${encodeURIComponent(ticker)}?depth=${depth}`, code));
+    // Sends the sign-in token when there is one, so the server can report this account's credits.
+    const res = await authFetch(withCode(`/api/status/${encodeURIComponent(ticker)}?depth=${depth}`, code));
     return res.ok ? res.json() : null;
   } catch {
     return null;

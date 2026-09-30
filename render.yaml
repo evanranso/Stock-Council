@@ -20,6 +20,12 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: ADMIN_EMAILS
+        sync: false
       - key: ALLOWED_ORIGIN_REGEX
         # Cloudflare Workers preview deploys: https://<id>-stock-council.evanranaso.workers.dev
         value: https://.*-stock-council\.evanranaso\.workers\.dev
