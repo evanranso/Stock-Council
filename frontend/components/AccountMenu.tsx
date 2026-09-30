@@ -24,8 +24,9 @@ export default function AccountMenu() {
     return () => document.removeEventListener("mousedown", close);
   }, [open]);
 
-  if (!access) return null;
-  if (access.mode !== "accounts") return <CreditPill />;
+  // Show the account buttons unless the server says accounts are off. If it's still waking up
+  // (free hosting sleeps), we don't know yet, and hiding "Log in" would strand visitors.
+  if (access && access.mode !== "accounts") return <CreditPill />;
   if (!ready) return <span className="h-7 w-24" />;
 
   if (!session) {

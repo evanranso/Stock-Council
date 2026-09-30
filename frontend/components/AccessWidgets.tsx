@@ -9,10 +9,20 @@ import { authFetch, meChanged, useAuth } from "@/lib/auth";
 export function useAccess(): Access | null {
   const [access, setAccess] = useState<Access | null>(null);
   useEffect(() => {
-    const load = () => fetchAccess().then(setAccess);
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let tries = 0;
+    const load = () =>
+      fetchAccess().then((a) => {
+        if (a) return setAccess(a);
+        // Server asleep or restarting: keep trying for a couple of minutes.
+        if (tries++ < 12) retry = setTimeout(load, 10_000);
+      });
     load();
     window.addEventListener(CREDITS_EVENT, load);
-    return () => window.removeEventListener(CREDITS_EVENT, load);
+    return () => {
+      clearTimeout(retry);
+      window.removeEventListener(CREDITS_EVENT, load);
+    };
   }, []);
   return access;
 }
