@@ -125,6 +125,8 @@ def health(db: bool = False) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 - report, don't crash
             out["ok"] = False
             out["database"] = {"ok": False, "error": type(exc).__name__}
+            if cache.db.is_postgres():
+                out["database"]["diagnosis"] = cache.db.diagnose()
         out["database"]["ms"] = round((time.time() - started) * 1000)
     return out
 
