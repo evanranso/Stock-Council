@@ -94,23 +94,30 @@ This is research, not personalized financial advice.
 """
 
 
-async def advocate(side: str, ticker: str, reports: list[AnalystReport], effort: str) -> CaseReport:
+async def advocate(
+    side: str, ticker: str, reports: list[AnalystReport], effort: str, model: str | None = None
+) -> CaseReport:
     user = (
         f"Ticker: {ticker}\n\n<specialist_reports>\n{render_reports(reports)}\n</specialist_reports>\n\n"
         f"Make the {side} case."
     )
-    return await structured(_advocate_prompt(side), user, CaseReport, effort, label=side)
+    return await structured(_advocate_prompt(side), user, CaseReport, effort, label=side, model=model)
 
 
 async def challenge(
-    ticker: str, reports: list[AnalystReport], bull: CaseReport, bear: CaseReport, effort: str
+    ticker: str,
+    reports: list[AnalystReport],
+    bull: CaseReport,
+    bear: CaseReport,
+    effort: str,
+    model: str | None = None,
 ) -> ChallengeReport:
     user = (
         f"Ticker: {ticker}\n\n<specialist_reports>\n{render_reports(reports)}\n</specialist_reports>\n\n"
         f"<bull_case>{bull.model_dump_json()}</bull_case>\n\n<bear_case>{bear.model_dump_json()}</bear_case>\n\n"
         "Challenge every lean that doesn't hold up."
     )
-    return await structured(CHALLENGER_PROMPT, user, ChallengeReport, effort, label="challenger")
+    return await structured(CHALLENGER_PROMPT, user, ChallengeReport, effort, label="challenger", model=model)
 
 
 def render_scores(scores: dict[Horizon, HorizonScore]) -> str:
@@ -136,6 +143,7 @@ async def judge(
     objections: ChallengeReport,
     scores: dict[Horizon, HorizonScore],
     effort: str,
+    model: str | None = None,
 ) -> JudgeRuling:
     user = (
         f"Ticker: {ticker}\n\n<specialist_reports>\n{render_reports(reports)}\n</specialist_reports>\n\n"
@@ -143,4 +151,4 @@ async def judge(
         f"<challenger>{objections.model_dump_json()}</challenger>\n\n"
         f"<formula_scores>\n{render_scores(scores)}\n</formula_scores>\n\nDeliver your ruling."
     )
-    return await structured(JUDGE_PROMPT, user, JudgeRuling, effort, label="judge")
+    return await structured(JUDGE_PROMPT, user, JudgeRuling, effort, label="judge", model=model)

@@ -13,7 +13,7 @@ export default function InvitePage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Your invite</h1>
         <p className="mt-1 text-sm text-zinc-400">
-          Each fresh analysis uses one credit. Opening a stock someone analyzed recently, or a report in your History, is always free.
+          Each fresh analysis uses credits by depth: Quick 1, Standard 2, Deep 3. Opening a stock someone analyzed recently, or a report in your History, is always free.
         </p>
       </div>
 
@@ -25,7 +25,7 @@ export default function InvitePage() {
           </div>
           <div>
             <div className="mb-1 flex justify-between text-sm">
-              <span className="text-zinc-400">Analyses left</span>
+              <span className="text-zinc-400">Credits left</span>
               <span className="font-semibold">
                 {invite.remaining} of {invite.credits_total}
               </span>

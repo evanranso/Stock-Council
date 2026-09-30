@@ -14,6 +14,7 @@ export type Stage = "connecting" | "analysts" | "debate" | "challenge" | "verdic
 export interface CouncilState {
   ticker: string;
   companyName: string | null;
+  depth?: "quick" | "standard" | "deep";
   stage: Stage;
   analysts: Record<string, AnalystEntry>;
   baseline?: Scores;
@@ -35,7 +36,7 @@ export function reduce(state: CouncilState, event: StoredEvent): CouncilState {
   const s = { ...state, cached: state.cached || !!event.cached };
   switch (event.type) {
     case "start":
-      return { ...s, companyName: event.company_name, stage: "analysts" };
+      return { ...s, companyName: event.company_name, depth: event.depth, stage: "analysts" };
     case "analyst":
       return {
         ...s,

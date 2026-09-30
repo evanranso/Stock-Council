@@ -8,6 +8,7 @@ import Report from "@/components/Report";
 import TickerSearch from "@/components/TickerSearch";
 import { TICKER_RE } from "@/lib/api";
 import { replay } from "@/lib/council";
+import { isDepth } from "@/lib/depth";
 import { getEntry, type HistoryEntry } from "@/lib/history";
 
 // /analyze?t=AAPL          -> live run (or the server's recent cached run)
@@ -16,6 +17,8 @@ function AnalyzePage() {
   const params = useSearchParams();
   const ticker = (params.get("t") ?? "").trim().toUpperCase();
   const runId = params.get("run");
+  const depthParam = params.get("depth");
+  const depth = isDepth(depthParam) ? depthParam : undefined;
 
   if (!TICKER_RE.test(ticker)) {
     return (
@@ -26,7 +29,7 @@ function AnalyzePage() {
     );
   }
   if (runId) return <SavedReport key={runId} id={runId} ticker={ticker} />;
-  return <Council key={ticker} ticker={ticker} />;
+  return <Council key={`${ticker}-${depth ?? ""}`} ticker={ticker} requestedDepth={depth} />;
 }
 
 function SavedReport({ id, ticker }: { id: string; ticker: string }) {

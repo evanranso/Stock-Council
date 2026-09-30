@@ -50,7 +50,7 @@ export default function Report({ state }: { state: CouncilState }) {
 
   return (
     <div className="space-y-10">
-      <VerdictHero ticker={state.ticker} companyName={state.companyName} verdict={verdict} finishedAt={state.finishedAt} cached={state.cached} />
+      <VerdictHero ticker={state.ticker} companyName={state.companyName} verdict={verdict} finishedAt={state.finishedAt} cached={state.cached} depth={state.depth} />
 
       <nav className="sticky top-[57px] z-20 -mx-4 overflow-x-auto border-b border-white/5 bg-[#07080d]/85 px-4 py-2 backdrop-blur-md" aria-label="Report sections">
         <ul className="flex gap-1.5 text-sm">

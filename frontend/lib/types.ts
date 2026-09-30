@@ -103,7 +103,7 @@ export interface Verdict {
 }
 
 export type CouncilEvent =
-  | { type: "start"; ticker: string; company_name: string | null; analysts: { id: string; name: string }[] }
+  | { type: "start"; ticker: string; company_name: string | null; depth?: "quick" | "standard" | "deep"; analysts: { id: string; name: string }[] }
   | {
       type: "analyst";
       report: AnalystReport;

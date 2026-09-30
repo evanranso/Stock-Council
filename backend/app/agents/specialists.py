@@ -208,7 +208,7 @@ def _render_packet(packet: DataPacket) -> str:
     )
 
 
-async def run_specialist(spec: Specialist, packet: DataPacket, effort: str) -> AnalystReport:
+async def run_specialist(spec: Specialist, packet: DataPacket, effort: str, model: str | None = None) -> AnalystReport:
     report = AnalystReport(analyst_id=spec.id, analyst_name=spec.name, packet_status=packet.status)
     if packet.status == "unavailable":
         # Nothing to read: don't spend a model call inventing an opinion.
@@ -216,7 +216,7 @@ async def run_specialist(spec: Specialist, packet: DataPacket, effort: str) -> A
         return report
     try:
         report.opinion = await structured(
-            spec.system_prompt, _render_packet(packet), AnalystOpinion, effort, label=spec.id
+            spec.system_prompt, _render_packet(packet), AnalystOpinion, effort, label=spec.id, model=model
         )
     except Exception as exc:  # noqa: BLE001 - one failed analyst shouldn't sink the council
         report.error = f"{type(exc).__name__}: {exc}"

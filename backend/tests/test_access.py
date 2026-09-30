@@ -27,7 +27,7 @@ def invite_mode(monkeypatch):
 
 
 def fake_council(outcome: str):
-    async def council(symbol):
+    async def council(symbol, depth=None):
         usage.record("price", "claude-opus-5-5", SimpleNamespace(input_tokens=10_000, output_tokens=2_000))
         yield {"type": "start", "ticker": symbol, "company_name": "X"}
         if outcome == "done":
@@ -49,17 +49,18 @@ def test_invite_required_for_fresh_runs(invite_mode, monkeypatch):
 def test_credit_is_charged_and_cached_views_are_free(invite_mode, monkeypatch):
     monkeypatch.setattr(main, "run_council", fake_council("done"))
     monkeypatch.setattr(main.cache, "record_verdict", lambda run: None)
-    code = invite_mode.post("/api/admin/invites", json={"label": "Sam", "credits": 1}, headers=ADMIN).json()["code"]
+    code = invite_mode.post("/api/admin/invites", json={"label": "Sam", "credits": 2}, headers=ADMIN).json()["code"]
 
-    assert events(invite_mode.get(f"/api/analyze/AAA?code={code.lower()}"))[-1]["type"] == "done"
+    # Standard costs 2 credits.
+    assert events(invite_mode.get(f"/api/analyze/AAA?code={code.lower()}&depth=standard"))[-1]["type"] == "done"
     assert cache.get_invite(code)["remaining"] == 0
 
     # Someone else (no code) opening the same ticker gets the cached run for free.
-    assert invite_mode.get("/api/status/AAA").json() == {"free": True, "reason": "cached"}
-    assert events(invite_mode.get("/api/analyze/AAA"))[0]["cached"] is True
+    assert invite_mode.get("/api/status/AAA?depth=standard").json() == {"free": True, "reason": "cached"}
+    assert events(invite_mode.get("/api/analyze/AAA?depth=quick"))[0]["cached"] is True
 
     # Out of credits for a new ticker.
-    assert events(invite_mode.get(f"/api/analyze/BBB?code={code}"))[0]["reason"] == "no_credits"
+    assert events(invite_mode.get(f"/api/analyze/BBB?code={code}&depth=quick"))[0]["reason"] == "no_credits"
 
 
 def test_failed_run_refunds_the_credit(invite_mode, monkeypatch):
@@ -117,3 +118,47 @@ async def test_tracker_collects_calls_from_parallel_tasks():
 def test_price_lookup_handles_unknown_and_suffixed_models():
     assert usage.price_for("claude-opus-4-8-20260101") == (5.0, 25.0)
     assert usage.price_for("something-new") == usage.DEFAULT_PRICE
+
+
+def test_depth_prices_and_cache_rules(invite_mode, monkeypatch):
+    seen = []
+
+    async def council(symbol, depth=None):
+        seen.append(depth)
+        yield {"type": "start", "ticker": symbol, "company_name": "X"}
+        yield {"type": "done", "run": {"ticker": symbol}}
+
+    monkeypatch.setattr(main, "run_council", council)
+    monkeypatch.setattr(main.cache, "record_verdict", lambda run: None)
+    code = cache.create_invite("Ann", 5)["code"]
+
+    events(invite_mode.get(f"/api/analyze/QQQ?code={code}&depth=quick"))
+    assert cache.get_invite(code)["remaining"] == 4  # quick = 1 credit
+
+    # A Quick run can't stand in for a Deep request...
+    assert invite_mode.get("/api/status/QQQ?depth=deep").json()["free"] is False
+    assert events(invite_mode.get(f"/api/analyze/QQQ?code={code}&depth=deep"))[-1]["type"] == "done"
+    assert cache.get_invite(code)["remaining"] == 1  # deep = 3 credits
+    # ...but the Deep run now serves Quick and Standard requests for free.
+    assert invite_mode.get("/api/status/QQQ?depth=quick").json()["free"] is True
+    assert seen == ["quick", "deep"]
+
+    # Not enough credits for Standard (2) with 1 left.
+    assert events(invite_mode.get(f"/api/analyze/ZZZ?code={code}&depth=standard"))[0]["reason"] == "no_credits"
+
+
+def test_failed_deep_run_refunds_all_its_credits(invite_mode, monkeypatch):
+    monkeypatch.setattr(main, "run_council", fake_council("fail"))
+    code = cache.create_invite("Bo", 3)["code"]
+    events(invite_mode.get(f"/api/analyze/FFF?code={code}&depth=deep"))
+    assert cache.get_invite(code)["remaining"] == 3
+
+
+def test_depth_profiles_use_cheaper_models_for_lighter_tiers():
+    from app.depth import get_depth
+
+    quick, standard, deep = get_depth("quick"), get_depth("standard"), get_depth("deep")
+    assert quick.analyst_model == standard.analyst_model == "claude-sonnet-5-5"
+    assert standard.debate_model == deep.debate_model == deep.analyst_model == main.settings.claude_model
+    assert (quick.credits, standard.credits, deep.credits) == (1, 2, 3)
+    assert get_depth("nonsense").id == "standard"

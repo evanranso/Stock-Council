@@ -15,6 +15,7 @@ export interface HistoryEntry {
   score?: number;
   confidence?: number;
   bottomLine?: string;
+  depth?: "quick" | "standard" | "deep";
   events?: StoredEvent[];
 }
 
@@ -73,6 +74,7 @@ export function saveCompleted(ticker: string, events: StoredEvent[]): string | n
     score: verdict.verdict.score,
     confidence: verdict.verdict.confidence,
     bottomLine: verdict.verdict.bottom_line ?? verdict.verdict.summary,
+    depth: start && start.type === "start" ? start.depth : undefined,
     events: events.map(({ cached: _cached, ...e }) => e as StoredEvent),
   };
   const rest = read().filter((e) => e.id !== id && !(e.ticker === ticker && e.status === "running"));

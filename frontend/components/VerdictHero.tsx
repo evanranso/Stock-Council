@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { ANALYST_BY_ID } from "@/lib/analysts";
+import { DEPTH_ICON, type DepthId } from "@/lib/depth";
 import { RATING_LABEL, RATING_STYLE, signed } from "@/lib/format";
 import { HORIZONS, type Verdict } from "@/lib/types";
 import { Meter, ScoreGauge } from "./charts";
@@ -20,12 +22,14 @@ export default function VerdictHero({
   verdict,
   finishedAt,
   cached,
+  depth,
 }: {
   ticker: string;
   companyName: string | null;
   verdict: Verdict;
   finishedAt?: string;
   cached?: boolean;
+  depth?: DepthId;
 }) {
   const reasonsFor = verdict.reasons_for ?? verdict.key_catalysts.slice(0, 3);
   const reasonsAgainst = verdict.reasons_against ?? verdict.key_risks.slice(0, 3);
@@ -38,6 +42,11 @@ export default function VerdictHero({
             The council&apos;s verdict
             {finishedAt && <> · {new Date(finishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</>}
             {cached && <> · recent saved run</>}
+            {depth && (
+              <span className="ml-2 rounded-full bg-white/5 px-2 py-0.5 text-xs text-zinc-300">
+                {DEPTH_ICON[depth]} {depth[0].toUpperCase() + depth.slice(1)} analysis
+              </span>
+            )}
           </p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight sm:text-4xl">
             {ticker}
@@ -100,6 +109,17 @@ export default function VerdictHero({
           </div>
         ))}
       </div>
+
+      {depth && depth !== "deep" && (
+        <div className="mt-5 flex flex-wrap items-center gap-3 rounded-xl border border-brand-400/25 bg-brand-500/[0.07] px-4 py-3 text-sm">
+          <span className="text-zinc-300">
+            This was a {depth === "quick" ? "Quick" : "Standard"} analysis. A Deep analysis uses the most capable model for every agent.
+          </span>
+          <Link href={`/analyze?t=${ticker}&depth=deep`} className="ml-auto rounded-lg bg-gradient-to-r from-brand-500 to-accent-500 px-3 py-1.5 font-semibold text-white">
+            🔬 Go deeper
+          </Link>
+        </div>
+      )}
 
       <div className="mt-5">
         <Disclosure label="Full verdict" openLabel="Hide full verdict">

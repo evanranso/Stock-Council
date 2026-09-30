@@ -25,6 +25,7 @@ interface RunRow {
   output_tokens: number;
   cost_usd: number;
   invite_label: string | null;
+  depth: string | null;
   detail: { agent: string; model: string; input_tokens: number; output_tokens: number; cost_usd: number }[];
 }
 interface Stats {
@@ -167,7 +168,7 @@ export default function AdminPage() {
             <table className="w-full text-sm">
               <thead className="text-left text-xs uppercase tracking-wider text-zinc-500">
                 <tr>
-                  {["Ticker", "When", "Status", "Invite", "Calls", "Tokens in / out", "Cost"].map((h) => (
+                  {["Ticker", "When", "Depth", "Status", "Invite", "Calls", "Tokens in / out", "Cost"].map((h) => (
                     <th key={h} className="px-4 py-3 font-medium">
                       {h}
                     </th>
@@ -180,7 +181,7 @@ export default function AdminPage() {
                 ))}
                 {!stats.recent_runs.length && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-6 text-center text-zinc-500">
+                    <td colSpan={8} className="px-4 py-6 text-center text-zinc-500">
                       No fresh runs recorded yet.
                     </td>
                   </tr>
@@ -201,6 +202,7 @@ function RunRowView({ r }: { r: RunRow }) {
       <tr className="cursor-pointer border-t border-white/5 hover:bg-white/[0.03]" onClick={() => setOpen(!open)}>
         <td className="px-4 py-2.5 font-mono font-semibold">{r.ticker}</td>
         <td className="px-4 py-2.5 text-zinc-400">{timeAgo(new Date(r.started * 1000).toISOString())}</td>
+        <td className="px-4 py-2.5 capitalize text-zinc-300">{r.depth ?? "deep"}</td>
         <td className="px-4 py-2.5">
           <span className={r.status === "done" ? "text-emerald-300" : "text-rose-300"}>{r.status}</span>
         </td>
@@ -213,7 +215,7 @@ function RunRowView({ r }: { r: RunRow }) {
       </tr>
       {open && (
         <tr className="bg-black/20">
-          <td colSpan={7} className="px-4 py-3">
+          <td colSpan={8} className="px-4 py-3">
             <div className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">
               {r.detail.map((d, i) => (
                 <div key={i} className="flex justify-between gap-3">

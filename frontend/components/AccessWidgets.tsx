@@ -30,7 +30,7 @@ export function InviteCapture() {
         setCode(a.invite.code);
         setMessage({
           ok: true,
-          text: `Welcome${a.invite.label ? `, ${a.invite.label}` : ""}! Your invite gives you ${a.invite.remaining} free ${a.invite.remaining === 1 ? "analysis" : "analyses"}.`,
+          text: `Welcome${a.invite.label ? `, ${a.invite.label}` : ""}! Your invite includes ${a.invite.remaining} free ${a.invite.remaining === 1 ? "credit" : "credits"}. A Quick analysis uses 1, Deep uses 3.`,
         });
       } else {
         setMessage({ ok: false, text: "That invite link isn't valid anymore. Ask for a new one." });
@@ -58,9 +58,9 @@ export function CreditPill() {
       <Link
         href="/invite"
         className={`hidden rounded-full px-3 py-1 text-xs font-medium ring-1 sm:inline-block ${n > 0 ? "bg-brand-500/15 text-brand-200 ring-brand-400/30" : "bg-rose-500/10 text-rose-200 ring-rose-400/30"}`}
-        title="Fresh analyses left on your invite. Recently analyzed stocks are free to open."
+        title="Credits left on your invite. Recently analyzed stocks are free to open."
       >
-        {n} {n === 1 ? "analysis" : "analyses"} left
+        {n} {n === 1 ? "credit" : "credits"} left
       </Link>
     );
   }

@@ -225,6 +225,7 @@ class CouncilRun(BaseModel):
     started_at: datetime
     finished_at: datetime | None = None
     model: str
+    depth: str = "deep"
     reference_price: float | None = Field(default=None, description="Last close when the council ran.")
     usage: dict[str, Any] | None = Field(default=None, description="Tokens and estimated USD cost of this run.")
     analysts: list[AnalystReport] = Field(default_factory=list)

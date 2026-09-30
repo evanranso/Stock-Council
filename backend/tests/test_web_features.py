@@ -60,7 +60,7 @@ def test_highlights_for_price_and_unavailable():
 async def test_live_run_can_be_rejoined_after_the_viewer_leaves(monkeypatch):
     gate = asyncio.Event()
 
-    async def fake_council(symbol):
+    async def fake_council(symbol, depth=None):
         yield {"type": "start"}
         await gate.wait()
         yield {"type": "done", "run": {"ticker": symbol}}

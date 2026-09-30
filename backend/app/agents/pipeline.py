@@ -13,6 +13,7 @@ from ..data import _yf, sec
 from ..data.base import in_thread
 from ..data.highlights import highlights
 from ..data.registry import ADAPTERS
+from ..depth import get_depth
 from ..schemas import AnalystReport, CouncilRun, DataPacket, HorizonScore
 from . import debate
 from .specialists import SPECIALISTS, run_specialist
@@ -20,18 +21,21 @@ from .specialists import SPECIALISTS, run_specialist
 Event = dict[str, Any]
 
 
-async def run_council(ticker: str) -> AsyncIterator[Event]:
+async def run_council(ticker: str, depth: str | None = None) -> AsyncIterator[Event]:
     settings = get_settings()
+    profile = get_depth(depth)
     run = CouncilRun(
         ticker=ticker,
         company_name=await _company_name(ticker),
         started_at=datetime.now(UTC),
-        model=settings.claude_model,
+        model=profile.debate_model,
+        depth=profile.id,
     )
     yield {
         "type": "start",
         "ticker": ticker,
         "company_name": run.company_name,
+        "depth": profile.id,
         "analysts": [{"id": s.id, "name": s.name} for s in SPECIALISTS],
     }
 
@@ -41,7 +45,7 @@ async def run_council(ticker: str) -> AsyncIterator[Event]:
     async def one(spec) -> tuple[DataPacket, AnalystReport]:
         packet = await ADAPTERS[spec.segment](ticker)
         async with limit:
-            return packet, await run_specialist(spec, packet, settings.specialist_effort)
+            return packet, await run_specialist(spec, packet, profile.analyst_effort, profile.analyst_model)
 
     tasks = [asyncio.create_task(one(s)) for s in SPECIALISTS]
     for done in asyncio.as_completed(tasks):
@@ -71,17 +75,17 @@ async def run_council(ticker: str) -> AsyncIterator[Event]:
 
     # Stage 2: bull and bear build their cases independently of each other.
     yield {"type": "stage", "stage": "debate"}
-    effort = settings.debate_effort
+    effort, model = profile.debate_effort, profile.debate_model
     run.bull, run.bear = await asyncio.gather(
-        debate.advocate("bull", ticker, run.analysts, effort),
-        debate.advocate("bear", ticker, run.analysts, effort),
+        debate.advocate("bull", ticker, run.analysts, effort, model),
+        debate.advocate("bear", ticker, run.analysts, effort, model),
     )
     yield {"type": "case", "side": "bull", "case": run.bull.model_dump(mode="json")}
     yield {"type": "case", "side": "bear", "case": run.bear.model_dump(mode="json")}
 
     # Stage 3: the challenger objects to whatever doesn't hold up.
     yield {"type": "stage", "stage": "challenge"}
-    run.challenge = await debate.challenge(ticker, run.analysts, run.bull, run.bear, effort)
+    run.challenge = await debate.challenge(ticker, run.analysts, run.bull, run.bear, effort, model)
     yield {"type": "challenge", "challenge": run.challenge.model_dump(mode="json")}
 
     # The formula again, with the challenger's penalties and echo-chamber collapses applied.
@@ -90,7 +94,7 @@ async def run_council(ticker: str) -> AsyncIterator[Event]:
 
     # Stage 4: the judge may nudge each horizon within a fixed band; the rating comes from the numbers.
     yield {"type": "stage", "stage": "verdict"}
-    ruling = await debate.judge(ticker, run.analysts, run.bull, run.bear, run.challenge, adjusted, effort)
+    ruling = await debate.judge(ticker, run.analysts, run.bull, run.bear, run.challenge, adjusted, effort, model)
     run.verdict = scoring.assemble_verdict(adjusted, ruling)
     run.finished_at = datetime.now(UTC)
     tracker = usage.current()

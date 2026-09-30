@@ -1,5 +1,6 @@
 // Invite codes and credits. The code lives in this browser; the server is the source of truth for credits.
 import { API } from "./api";
+import type { DepthId, DepthOption } from "./depth";
 import type { Rating } from "./types";
 
 const KEY = "stockCouncil.invite.v1";
@@ -17,12 +18,16 @@ export interface Access {
   mode: "open" | "invite";
   invite: Invite | null;
   valid: boolean;
+  depths?: DepthOption[];
+  default_depth?: DepthId;
 }
 export interface TickerStatus {
   free: boolean;
   reason: "running" | "cached" | null;
   mode?: "open" | "invite";
   invite?: Invite | null;
+  depth?: DepthId;
+  depths?: DepthOption[];
 }
 export interface RecentRun {
   ticker: string;
@@ -30,6 +35,7 @@ export interface RecentRun {
   rating: Rating | null;
   score: number | null;
   analyzed_at: number;
+  depth?: DepthId;
 }
 
 export function getCode(): string | null {
@@ -67,9 +73,9 @@ export async function fetchAccess(code = getCode()): Promise<Access | null> {
   }
 }
 
-export async function fetchStatus(ticker: string, code = getCode()): Promise<TickerStatus | null> {
+export async function fetchStatus(ticker: string, depth: DepthId, code = getCode()): Promise<TickerStatus | null> {
   try {
-    const res = await fetch(withCode(`${API}/api/status/${encodeURIComponent(ticker)}`, code));
+    const res = await fetch(withCode(`${API}/api/status/${encodeURIComponent(ticker)}?depth=${depth}`, code));
     return res.ok ? res.json() : null;
   } catch {
     return null;
@@ -85,6 +91,6 @@ export async function fetchRecent(): Promise<RecentRun[]> {
   }
 }
 
-export function analyzeUrl(ticker: string, code = getCode()): string {
-  return withCode(`${API}/api/analyze/${encodeURIComponent(ticker)}`, code);
+export function analyzeUrl(ticker: string, depth: DepthId, code = getCode()): string {
+  return withCode(`${API}/api/analyze/${encodeURIComponent(ticker)}?depth=${depth}`, code);
 }

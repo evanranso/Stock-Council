@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { RATING_LABEL, RATING_STYLE, signed, timeAgo } from "@/lib/format";
+import { DEPTH_ICON } from "@/lib/depth";
 import { clearHistory, type HistoryEntry, listHistory, removeEntry } from "@/lib/history";
 
 function href(e: HistoryEntry): string {
@@ -48,7 +49,8 @@ export default function RecentList({ limit, manage = false }: { limit?: number; 
                 <span className="truncate text-sm text-zinc-400">{e.name}</span>
               </div>
               {manage && e.bottomLine && <p className="mt-1 line-clamp-2 text-sm text-zinc-300">{e.bottomLine}</p>}
-              <p className="mt-1 text-xs text-zinc-500">{e.status === "running" ? "In progress — click to rejoin" : timeAgo(e.savedAt)}</p>
+              <p className="mt-1 text-xs text-zinc-500">{e.status === "running" ? "In progress — click to rejoin" : timeAgo(e.savedAt)}
+                {e.depth && <> · {DEPTH_ICON[e.depth]} {e.depth}</>}</p>
             </div>
             {e.status === "done" && e.rating ? (
               <div className="text-right">

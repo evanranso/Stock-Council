@@ -69,7 +69,7 @@ def fake_world(monkeypatch):
 
         return fetch
 
-    async def fake_structured(system, user, schema, effort, label=None):
+    async def fake_structured(system, user, schema, effort, **_):
         prompts.setdefault(schema.__name__, []).append(user)
         return {AnalystOpinion: OPINION, CaseReport: CASE, ChallengeReport: CHALLENGE, JudgeRuling: RULING}[schema]
 
@@ -115,3 +115,20 @@ async def test_specialists_only_see_their_own_packet(fake_world):
     for prompt in specialist_prompts:
         leaked = [s.segment for s in specialists.SPECIALISTS if f"{s.segment}-only-data" in prompt]
         assert len(leaked) == 1, f"specialist saw other segments' data: {leaked}"
+
+
+async def test_depth_picks_models_per_stage(fake_world, monkeypatch):
+    calls = []
+
+    async def capture(system, user, schema, effort, label="agent", model=None):
+        calls.append((schema.__name__, model, effort))
+        return {AnalystOpinion: OPINION, CaseReport: CASE, ChallengeReport: CHALLENGE, JudgeRuling: RULING}[schema]
+
+    monkeypatch.setattr(specialists, "structured", capture)
+    monkeypatch.setattr(debate, "structured", capture)
+    events = [e async for e in pipeline.run_council("FAKE", "standard")]
+    assert events[0]["depth"] == "standard" and events[-1]["run"]["depth"] == "standard"
+    analyst_models = {m for name, m, _ in calls if name == "AnalystOpinion"}
+    debate_models = {m for name, m, _ in calls if name != "AnalystOpinion"}
+    assert analyst_models == {"claude-sonnet-5-5"}
+    assert debate_models == {pipeline.get_settings().claude_model}

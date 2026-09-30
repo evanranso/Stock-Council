@@ -45,7 +45,7 @@ class Settings:
     # "open": anyone can run fresh analyses (still rate-limited). "invite": fresh analyses need an invite
     # code with credits left. Viewing a stock someone already ran recently is always free.
     access_mode: str = os.getenv("ACCESS_MODE", "open").lower()
-    default_invite_credits: int = int(os.getenv("DEFAULT_INVITE_CREDITS", "3"))
+    default_invite_credits: int = int(os.getenv("DEFAULT_INVITE_CREDITS", "6"))
     # Unlocks /api/admin/* (cost stats, invite codes). Leave unset to disable admin endpoints.
     admin_key: str | None = os.getenv("ADMIN_KEY") or None
     cache_path: str = os.getenv("CACHE_PATH", "stock_council.db")

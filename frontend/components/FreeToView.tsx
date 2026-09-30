@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { fetchRecent, type RecentRun } from "@/lib/access";
+import { DEPTH_ICON } from "@/lib/depth";
 import { RATING_LABEL, RATING_STYLE, signed, timeAgo } from "@/lib/format";
 
 /** Stocks anyone analyzed recently: opening them costs nothing. */
@@ -19,13 +20,15 @@ export default function FreeToView({ title = "Free to open: recently analyzed", 
       <ul className={`grid gap-3 ${narrow ? "sm:grid-cols-2" : "sm:grid-cols-2 lg:grid-cols-3"}`}>
         {runs.map((r) => (
           <li key={r.ticker}>
-            <Link href={`/analyze?t=${r.ticker}`} className="card flex items-center gap-4 p-4 transition hover:border-brand-400/40 hover:bg-white/[0.05]">
+            <Link href={`/analyze?t=${r.ticker}${r.depth ? `&depth=${r.depth}` : ""}`} className="card flex items-center gap-4 p-4 transition hover:border-brand-400/40 hover:bg-white/[0.05]">
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline gap-2">
                   <span className="font-mono text-lg font-bold">{r.ticker}</span>
                   <span className="truncate text-sm text-zinc-400">{r.name}</span>
                 </div>
-                <p className="mt-1 text-xs text-zinc-500">{timeAgo(new Date(r.analyzed_at * 1000).toISOString())} · free</p>
+                <p className="mt-1 text-xs text-zinc-500">{timeAgo(new Date(r.analyzed_at * 1000).toISOString())}
+                  {r.depth && <> · {DEPTH_ICON[r.depth]} {r.depth}</>} · free
+                </p>
               </div>
               {r.rating && (
                 <div className="text-right">

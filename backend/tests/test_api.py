@@ -12,11 +12,11 @@ def events(resp):
 
 def test_daily_budget_refusal_arrives_as_an_event(monkeypatch):
     monkeypatch.setattr(main, "settings", dataclasses.replace(main.settings, max_runs_per_day=1))
-    monkeypatch.setattr(main.cache, "get_run", lambda t: None)
+    monkeypatch.setattr(main.cache, "get_run", lambda *a: None)
     monkeypatch.setattr(main, "_daily_runs", {"2000-01-01": 5})  # stale day is dropped
     monkeypatch.setattr(main, "_recent_runs", main.defaultdict(main.deque))
 
-    async def fake_council(symbol):
+    async def fake_council(symbol, depth=None):
         yield {"type": "error", "message": "stub run"}
 
     monkeypatch.setattr(main, "run_council", fake_council)

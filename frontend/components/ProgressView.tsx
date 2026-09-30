@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ANALYSTS, isComingSoon } from "@/lib/analysts";
 import { ComingSoon } from "./AnalystCard";
 import { type CouncilState, progress } from "@/lib/council";
+import { DEPTH_ICON } from "@/lib/depth";
 import LeanBadge from "./LeanBadge";
 
 const STEPS = [
@@ -51,7 +52,9 @@ export default function ProgressView({ state }: { state: CouncilState }) {
     <div className="card fade-up overflow-hidden p-6 sm:p-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-sm font-medium text-brand-300">Convening the council</p>
+          <p className="text-sm font-medium text-brand-300">
+            Convening the council{state.depth && <> · {DEPTH_ICON[state.depth]} {state.depth[0].toUpperCase() + state.depth.slice(1)}</>}
+          </p>
           <h1 className="text-3xl font-bold tracking-tight">
             {state.ticker}
             {state.companyName && <span className="ml-3 text-lg font-normal text-zinc-400">{state.companyName}</span>}

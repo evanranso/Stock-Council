@@ -109,3 +109,17 @@ How credits work: one credit = one fresh analysis. Opening a stock anyone analyz
 `CACHE_TTL_HOURS`, or a report in your History, is free. A run that fails is refunded automatically.
 Costs are estimates from token counts × list prices in `backend/app/usage.py`; your Anthropic
 console is the source of truth for billing.
+
+### Analysis depth
+
+Visitors pick a depth before each fresh run (`backend/app/depth.py`):
+
+| Depth | Analysts | Debate, challenger, judge | Credits (env var) |
+|---|---|---|---|
+| Quick | `CHEAP_MODEL` (Sonnet 5.5), low effort | `CHEAP_MODEL` | `CREDITS_QUICK` = 1 |
+| Standard (default) | `CHEAP_MODEL` | `CLAUDE_MODEL` (Opus 5.5) | `CREDITS_STANDARD` = 2 |
+| Deep | `CLAUDE_MODEL` | `CLAUDE_MODEL` | `CREDITS_DEEP` = 3 |
+
+A cached run serves any request of equal or lower depth for free. The admin page shows depth
+and cost for every run, so you can compare real costs per tier. `DEFAULT_INVITE_CREDITS`
+defaults to 6. Existing invites keep their totals; top them up with **+3 credits** if needed.

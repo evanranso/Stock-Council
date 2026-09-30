@@ -33,6 +33,9 @@ def _conn() -> sqlite3.Connection:
             created REAL, disabled INTEGER DEFAULT 0
         )"""
     )
+    # Columns added after launch: add them to databases created by older versions.
+    _add_column(conn, "runs", "depth", "TEXT DEFAULT 'deep'")
+    _add_column(conn, "usage", "depth", "TEXT")
     # Append-only history of every verdict, so the scoring weights can later be
     # checked against what the stock actually did.
     conn.execute(
@@ -42,6 +45,14 @@ def _conn() -> sqlite3.Connection:
         )"""
     )
     return conn
+
+
+def _add_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
+    if column not in {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
+DEPTH_RANK = {"quick": 0, "standard": 1, "deep": 2}
 
 
 def record_verdict(run: dict[str, Any]) -> None:
@@ -66,18 +77,24 @@ def record_verdict(run: dict[str, Any]) -> None:
         )
 
 
-def get_run(ticker: str) -> list[dict[str, Any]] | None:
+def get_run(ticker: str, min_depth: str = "quick") -> list[dict[str, Any]] | None:
+    """A recent cached run at least as deep as requested (a Deep run can stand in for a Quick request)."""
     ttl = get_settings().cache_ttl_hours * 3600
     with _conn() as conn:
-        row = conn.execute("SELECT created, events FROM runs WHERE ticker = ?", (ticker,)).fetchone()
-    if row and time.time() - row[0] < ttl:
-        return json.loads(row[1])
-    return None
+        row = conn.execute("SELECT created, events, depth FROM runs WHERE ticker = ?", (ticker,)).fetchone()
+    if not row or time.time() - row["created"] >= ttl:
+        return None
+    if DEPTH_RANK.get(row["depth"] or "deep", 2) < DEPTH_RANK.get(min_depth, 0):
+        return None
+    return json.loads(row["events"])
 
 
-def save_run(ticker: str, events: list[dict[str, Any]]) -> None:
+def save_run(ticker: str, events: list[dict[str, Any]], depth: str = "deep") -> None:
     with _conn() as conn:
-        conn.execute("REPLACE INTO runs VALUES (?, ?, ?)", (ticker, time.time(), json.dumps(events)))
+        conn.execute(
+            "REPLACE INTO runs (ticker, created, events, depth) VALUES (?, ?, ?, ?)",
+            (ticker, time.time(), json.dumps(events), depth),
+        )
 
 
 def recent_runs(limit: int = 12) -> list[dict[str, Any]]:
@@ -85,7 +102,8 @@ def recent_runs(limit: int = 12) -> list[dict[str, Any]]:
     cutoff = time.time() - get_settings().cache_ttl_hours * 3600
     with _conn() as conn:
         rows = conn.execute(
-            "SELECT ticker, created, events FROM runs WHERE created > ? ORDER BY created DESC LIMIT ?", (cutoff, limit)
+            "SELECT ticker, created, events, depth FROM runs WHERE created > ? ORDER BY created DESC LIMIT ?",
+            (cutoff, limit),
         ).fetchall()
     out = []
     for row in rows:
@@ -99,6 +117,7 @@ def recent_runs(limit: int = 12) -> list[dict[str, Any]]:
                 "rating": verdict.get("rating"),
                 "score": verdict.get("score"),
                 "analyzed_at": row["created"],
+                "depth": row["depth"] or "deep",
             }
         )
     return out
@@ -109,10 +128,18 @@ def recent_runs(limit: int = 12) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def record_usage(ticker: str, started: float, status: str, invite_code: str | None, summary: dict[str, Any]) -> None:
+def record_usage(
+    ticker: str,
+    started: float,
+    status: str,
+    invite_code: str | None,
+    summary: dict[str, Any],
+    depth: str | None = None,
+) -> None:
     with _conn() as conn:
         conn.execute(
-            "INSERT INTO usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO usage (ticker, started, finished, status, invite_code, calls, input_tokens, output_tokens,"
+            " cost_usd, detail, depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ticker,
                 started,
@@ -124,6 +151,7 @@ def record_usage(ticker: str, started: float, status: str, invite_code: str | No
                 summary.get("output_tokens", 0),
                 summary.get("cost_usd", 0.0),
                 json.dumps(summary.get("by_agent", [])),
+                depth,
             ),
         )
 
@@ -148,7 +176,7 @@ def usage_stats(recent: int = 50) -> dict[str, Any]:
 
         rows = conn.execute(
             """SELECT u.ticker, u.started, u.finished, u.status, u.calls, u.input_tokens, u.output_tokens,
-                      u.cost_usd, u.detail, i.label AS invite_label
+                      u.cost_usd, u.detail, u.depth, i.label AS invite_label
                FROM usage u LEFT JOIN invites i ON i.code = u.invite_code
                ORDER BY u.started DESC LIMIT ?""",
             (recent,),
@@ -205,21 +233,22 @@ def list_invites() -> list[dict[str, Any]]:
     return [inv for r in rows if (inv := get_invite(r["code"]))]
 
 
-def consume_credit(code: str) -> bool:
-    """Atomically use one credit. False if the code is unknown, disabled, or out of credits."""
+def consume_credit(code: str, amount: int = 1) -> bool:
+    """Atomically use `amount` credits. False if the code is unknown, disabled, or short of credits."""
     with _conn() as conn:
         cur = conn.execute(
-            "UPDATE invites SET credits_used = credits_used + 1 "
-            "WHERE code = ? AND disabled = 0 AND credits_used < credits_total",
-            (normalize_code(code),),
+            "UPDATE invites SET credits_used = credits_used + ? "
+            "WHERE code = ? AND disabled = 0 AND credits_used + ? <= credits_total",
+            (amount, normalize_code(code), amount),
         )
         return cur.rowcount == 1
 
 
-def refund_credit(code: str) -> None:
+def refund_credit(code: str, amount: int = 1) -> None:
     with _conn() as conn:
         conn.execute(
-            "UPDATE invites SET credits_used = MAX(0, credits_used - 1) WHERE code = ?", (normalize_code(code),)
+            "UPDATE invites SET credits_used = MAX(0, credits_used - ?) WHERE code = ?",
+            (amount, normalize_code(code)),
         )
 
 

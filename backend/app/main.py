@@ -21,6 +21,7 @@ from .agents.pipeline import run_council
 from .agents.specialists import SPECIALISTS
 from .config import get_settings
 from .data.registry import ADAPTERS
+from .depth import DEFAULT_DEPTH, all_depths, get_depth
 
 app = FastAPI(title="Stock Council API")
 settings = get_settings()
@@ -78,15 +79,15 @@ def _check_rate_limit(ip: str) -> None:
     window.append(now)
 
 
-def _check_invite(code: str | None) -> dict[str, Any] | None:
-    """In invite mode, a fresh analysis needs a valid code with a credit left (not yet charged)."""
+def _check_invite(code: str | None, credits: int = 1) -> dict[str, Any] | None:
+    """In invite mode, a fresh analysis needs a valid code with enough credits left (not yet charged)."""
     if settings.access_mode != "invite":
         return None
     invite = cache.get_invite(code)
     if not invite or invite["disabled"]:
         raise AccessDenied("invite_required", "Stock Council is invite-only right now. Enter your invite code.")
-    if invite["remaining"] <= 0:
-        raise AccessDenied("no_credits", "You've used all the analyses on your invite.")
+    if invite["remaining"] < credits:
+        raise AccessDenied("no_credits", "You don't have enough credits left for this depth.")
     return invite
 
 
@@ -146,23 +147,27 @@ async def access(code: str | None = None) -> dict[str, Any]:
         "mode": settings.access_mode,
         "invite": _public_invite(invite),
         "valid": bool(invite and not invite["disabled"]),
+        "depths": [d.public() for d in all_depths()],
+        "default_depth": DEFAULT_DEPTH,
     }
 
 
 @app.get("/api/status/{ticker}")
-async def status(ticker: str, code: str | None = None) -> dict[str, Any]:
-    """Would opening this ticker be free (already running or recently analyzed), or cost a credit?"""
+async def status(ticker: str, code: str | None = None, depth: str | None = None) -> dict[str, Any]:
+    """Would opening this ticker at this depth be free (running, or recently analyzed at least this deep)?"""
     symbol = _ticker(ticker)
+    profile = get_depth(depth)
     if symbol in _live:
-        return {"free": True, "reason": "running"}
-    if cache.get_run(symbol) is not None:
+        return {"free": True, "reason": "running", "depth": _live[symbol].depth}
+    if cache.get_run(symbol, profile.id) is not None:
         return {"free": True, "reason": "cached"}
     invite = cache.get_invite(code)
     return {
-        "free": settings.access_mode != "invite",
+        "free": False,
         "reason": None,
         "mode": settings.access_mode,
         "invite": _public_invite(invite),
+        "depths": [d.public() for d in all_depths()],
     }
 
 
@@ -184,9 +189,13 @@ class LiveRun:
     reopening the ticker replays everything so far and follows the rest.
     """
 
-    def __init__(self, symbol: str, invite_code: str | None = None) -> None:
+    def __init__(
+        self, symbol: str, invite_code: str | None = None, depth: str = DEFAULT_DEPTH, credits: int = 0
+    ) -> None:
         self.symbol = symbol
         self.invite_code = invite_code
+        self.depth = depth
+        self.credits = credits
         self.events: list[dict[str, Any]] = []
         self.done = False
         self.changed = asyncio.Condition()
@@ -204,20 +213,25 @@ class LiveRun:
         tracker = usage.start()  # every Claude call in this run is costed against it
         started = time.time()
         try:
-            async for event in run_council(self.symbol):
+            async for event in run_council(self.symbol, self.depth):
                 await self.publish(event)
         except Exception as exc:  # noqa: BLE001 - surface failures to the UI instead of a dead stream
             await self.publish({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
         finally:
             completed = bool(self.events) and self.events[-1]["type"] == "done"
             if completed:
-                cache.save_run(self.symbol, self.events)
+                cache.save_run(self.symbol, self.events, self.depth)
                 cache.record_verdict(self.events[-1]["run"])
             elif self.invite_code:
-                cache.refund_credit(self.invite_code)  # don't charge for a run that failed
+                cache.refund_credit(self.invite_code, self.credits)  # don't charge for a run that failed
             try:
                 cache.record_usage(
-                    self.symbol, started, "done" if completed else "failed", self.invite_code, tracker.summary()
+                    self.symbol,
+                    started,
+                    "done" if completed else "failed",
+                    self.invite_code,
+                    tracker.summary(),
+                    self.depth,
                 )
             except Exception:  # noqa: BLE001 - accounting must never break a run
                 pass
@@ -241,23 +255,27 @@ _live: dict[str, LiveRun] = {}
 
 
 @app.get("/api/analyze/{ticker}")
-async def analyze(ticker: str, request: Request, refresh: bool = False, code: str | None = None) -> StreamingResponse:
+async def analyze(
+    ticker: str, request: Request, refresh: bool = False, code: str | None = None, depth: str | None = None
+) -> StreamingResponse:
     symbol = _ticker(ticker)
+    profile = get_depth(depth)
     live = _live.get(symbol)
-    cached = None if (refresh or live) else cache.get_run(symbol)
+    cached = None if (refresh or live) else cache.get_run(symbol, profile.id)
     refusal: AccessDenied | None = None
     if live is None and cached is None:
-        # A fresh run costs money: check the invite, the per-visitor and daily limits, then charge one credit.
+        # A fresh run costs money: check the invite, the per-visitor and daily limits, then charge its credits.
         try:
-            invite = _check_invite(code)
+            invite = _check_invite(code, profile.credits)
             _check_rate_limit(_client_ip(request))
             _check_daily_budget()
-            if invite and not cache.consume_credit(invite["code"]):
-                raise AccessDenied("no_credits", "You've used all the analyses on your invite.")
+            if invite and not cache.consume_credit(invite["code"], profile.credits):
+                raise AccessDenied("no_credits", "You don't have enough credits left for this depth.")
         except AccessDenied as exc:
             refusal = exc
         else:
-            live = _live[symbol] = LiveRun(symbol, invite["code"] if invite else None)
+            charged = profile.credits if invite else 0
+            live = _live[symbol] = LiveRun(symbol, invite["code"] if invite else None, profile.id, charged)
             live.task = asyncio.create_task(live.drive())
 
     async def stream() -> AsyncIterator[str]:
