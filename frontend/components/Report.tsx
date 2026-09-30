@@ -1,7 +1,11 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
 import { ANALYSTS, isComingSoon } from "@/lib/analysts";
 import type { CouncilState } from "@/lib/council";
 import { formatValue } from "@/lib/format";
 import AnalystCard from "./AnalystCard";
+import AnalystFocus from "./AnalystFocus";
 import ChallengePanel from "./ChallengePanel";
 import { BarChart, LineChart, VoteBar } from "./charts";
 import DebateSection from "./DebateSection";
@@ -28,6 +32,23 @@ function SectionTitle({ id, title, sub }: { id: string; title: string; sub?: str
 
 export default function Report({ state }: { state: CouncilState }) {
   const { verdict } = state;
+  // Full-screen analyst reader. Opening it adds a history entry, so Back (or a phone's back swipe) closes it.
+  const [focus, setFocusState] = useState<string | null>(null);
+  const readable: string[] = ANALYSTS.map((a) => a.id).filter((id) => state.analysts[id]?.report.opinion);
+  const focusIndex = focus ? readable.indexOf(focus) : -1;
+  const setFocus = useCallback((id: string) => {
+    setFocusState((current) => {
+      if (!current) window.history.pushState({ analyst: id }, "");
+      return id;
+    });
+  }, []);
+  const closeFocus = useCallback(() => window.history.back(), []);
+  useEffect(() => {
+    const onPop = () => setFocusState(null);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
   if (!verdict) return null;
   const entries = Object.values(state.analysts);
   const opinions = entries.map((e) => e.report.opinion).filter((o) => o !== null);
@@ -98,9 +119,19 @@ export default function Report({ state }: { state: CouncilState }) {
         <SectionTitle id="analysts" title="The 12 analysts" sub="Each read only its own data. Open a card for the full breakdown and sources." />
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {ANALYSTS.map((a) => (
-            <AnalystCard key={a.id} id={a.id} entry={state.analysts[a.id]} />
+            <AnalystCard key={a.id} id={a.id} entry={state.analysts[a.id]} onOpen={() => setFocus(a.id)} />
           ))}
         </div>
+        {focus && focusIndex >= 0 && (
+          <AnalystFocus
+            id={focus}
+            entry={state.analysts[focus]!}
+            position={{ index: focusIndex, total: readable.length }}
+            onClose={closeFocus}
+            onPrev={() => setFocus(readable[(focusIndex - 1 + readable.length) % readable.length])}
+            onNext={() => setFocus(readable[(focusIndex + 1) % readable.length])}
+          />
+        )}
       </section>
 
       <section>
