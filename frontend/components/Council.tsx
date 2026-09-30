@@ -19,6 +19,7 @@ type Phase =
   | { kind: "confirm"; mode: AccessMode; remaining?: number; depths: DepthOption[]; error?: string }
   | { kind: "gate"; reason: string }
   | { kind: "starting" }
+  | { kind: "unreachable" }
   | { kind: "stream" };
 
 // Live analysis: checks whether this is free or costs credits, lets the visitor pick a depth,
@@ -30,6 +31,7 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
   const state = useMemo(() => replay(ticker, events), [ticker, events]);
   const saved = useRef(false);
   const { ready, session } = useAuth();
+  const [attempt, setAttempt] = useState(0);
   const signedIn = !!session;
 
   // 1. Is opening this ticker free (running, or recently analyzed at least this deep)? If not, ask first.
@@ -41,7 +43,8 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
     setPhase({ kind: "checking" });
     fetchStatus(ticker, wanted).then((s: TickerStatus | null) => {
       if (cancelled) return;
-      if (!s || s.free) return setPhase({ kind: "stream" }); // server unreachable: let the stream report it
+      if (!s) return setPhase({ kind: "unreachable" });
+      if (s.free) return setPhase({ kind: "stream" });
       const depths = s.depths?.length ? s.depths : DEFAULT_DEPTHS;
       const cheapest = Math.min(...depths.map((d) => d.credits));
       if (s.mode === "accounts") {
@@ -60,7 +63,7 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
     return () => {
       cancelled = true;
     };
-  }, [ticker, requestedDepth, ready, signedIn]);
+  }, [ticker, requestedDepth, ready, signedIn, attempt]);
 
   // 2. Stream the council.
   useEffect(() => {
@@ -136,7 +139,17 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
     }
   }
 
-  if (phase.kind === "checking" || phase.kind === "starting") return <div className="card h-40 animate-pulse" />;
+  if (phase.kind === "checking" || phase.kind === "starting") return <Waiting />;
+  if (phase.kind === "unreachable")
+    return (
+      <div className="card mx-auto max-w-xl space-y-3 p-6 text-center">
+        <h1 className="text-xl font-semibold">The server isn&apos;t responding</h1>
+        <p className="text-sm text-zinc-400">It may still be waking up or restarting after an update. This usually clears within a minute.</p>
+        <button onClick={() => setAttempt((n) => n + 1)} className="rounded-lg bg-gradient-to-r from-brand-500 to-accent-500 px-5 py-2 font-semibold text-white">
+          Try again
+        </button>
+      </div>
+    );
   if (phase.kind === "confirm")
     return (
       <ConfirmRun
@@ -287,6 +300,20 @@ function Gate({ ticker, reason, onUnlocked }: { ticker: string; reason: string; 
         {actions}
       </div>
       <FreeToView narrow />
+    </div>
+  );
+}
+
+/** Loading placeholder that explains a long wait (free hosting sleeps when idle). */
+function Waiting() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), 4000);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div className="card grid h-40 animate-pulse place-items-center p-6 text-center text-sm text-zinc-400">
+      {slow ? "Waking up the server. The first visit after a quiet spell can take up to a minute…" : ""}
     </div>
   );
 }

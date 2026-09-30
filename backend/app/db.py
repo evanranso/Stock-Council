@@ -37,11 +37,25 @@ def _pg_pool():
             from psycopg_pool import ConnectionPool
 
             # prepare_threshold=None: Supabase's pooler (PgBouncer) can't use server-side prepared statements.
+            # Timeouts everywhere: a dead or slow connection must fail fast, never hang a request.
             _pool = ConnectionPool(
                 database_url(),
                 min_size=1,
                 max_size=8,
-                kwargs={"row_factory": dict_row, "prepare_threshold": None, "autocommit": False},
+                timeout=15,  # wait at most 15s for a free connection
+                max_idle=120,  # close idle connections before Supabase's pooler silently drops them
+                check=ConnectionPool.check_connection,  # test each connection before handing it out
+                kwargs={
+                    "row_factory": dict_row,
+                    "prepare_threshold": None,
+                    "autocommit": False,
+                    "connect_timeout": 10,
+                    "keepalives": 1,
+                    "keepalives_idle": 30,
+                    "keepalives_interval": 10,
+                    "keepalives_count": 3,
+                    "tcp_user_timeout": 20000,  # ms: a dropped network connection errors instead of hanging
+                },
                 open=True,
             )
         return _pool

@@ -78,13 +78,23 @@ export async function fetchAccess(code = getCode()): Promise<Access | null> {
   }
 }
 
-export async function fetchStatus(ticker: string, depth: DepthId, code = getCode()): Promise<TickerStatus | null> {
+export async function fetchStatus(
+  ticker: string,
+  depth: DepthId,
+  code = getCode(),
+  timeoutMs = 45_000,
+): Promise<TickerStatus | null> {
+  // Give up eventually (a sleeping free server takes up to ~50s to wake) instead of waiting forever.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     // Sends the sign-in token when there is one, so the server can report this account's credits.
-    const res = await authFetch(withCode(`/api/status/${encodeURIComponent(ticker)}?depth=${depth}`, code));
+    const res = await authFetch(withCode(`/api/status/${encodeURIComponent(ticker)}?depth=${depth}`, code), { signal: ctrl.signal });
     return res.ok ? res.json() : null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

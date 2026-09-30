@@ -30,3 +30,13 @@ def test_rate_limit_uses_proxy_appended_ip(monkeypatch):
     monkeypatch.setattr(main, "settings", dataclasses.replace(main.settings, trust_proxy=True))
     req = type("R", (), {"headers": {"x-forwarded-for": "6.6.6.6, 203.0.113.9"}, "client": None})()
     assert main._client_ip(req) == "203.0.113.9"
+
+
+def test_health_can_check_the_database():
+    from fastapi.testclient import TestClient
+
+    from app import main
+
+    with TestClient(main.app) as client:
+        body = client.get("/api/health?db=1").json()
+    assert body["ok"] is True and body["database"]["ok"] is True and body["database"]["kind"] == "sqlite"

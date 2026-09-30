@@ -74,12 +74,12 @@ def _bearer(authorization: str | None) -> str | None:
     return None
 
 
-async def optional_user(authorization: str | None = Header(default=None)) -> User | None:
+def optional_user(authorization: str | None = Header(default=None)) -> User | None:
     token = _bearer(authorization)
     return verify_token(token) if token else None
 
 
-async def require_user(authorization: str | None = Header(default=None)) -> User:
+def require_user(authorization: str | None = Header(default=None)) -> User:
     token = _bearer(authorization)
     if not token:
         raise HTTPException(401, "Sign in to continue.")

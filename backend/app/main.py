@@ -114,8 +114,19 @@ def _sse(event: dict[str, Any]) -> str:
 
 
 @app.get("/api/health")
-async def health() -> dict[str, Any]:
-    return {"ok": True, "model": settings.claude_model}
+def health(db: bool = False) -> dict[str, Any]:
+    """Liveness. With ?db=1, also time a database round trip (to diagnose a slow or unreachable database)."""
+    out: dict[str, Any] = {"ok": True, "model": settings.claude_model}
+    if db:
+        started = time.time()
+        try:
+            cache.recent_runs(limit=1)
+            out["database"] = {"ok": True, "kind": "postgres" if cache.db.is_postgres() else "sqlite"}
+        except Exception as exc:  # noqa: BLE001 - report, don't crash
+            out["ok"] = False
+            out["database"] = {"ok": False, "error": type(exc).__name__}
+        out["database"]["ms"] = round((time.time() - started) * 1000)
+    return out
 
 
 @app.get("/api/analysts")
@@ -153,7 +164,7 @@ def _public_invite(invite: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 @app.get("/api/access")
-async def access(code: str | None = None) -> dict[str, Any]:
+def access(code: str | None = None) -> dict[str, Any]:
     """What this visitor can do: access mode and, with a code, their credits."""
     invite = cache.get_invite(code)
     return {
@@ -171,7 +182,7 @@ def _account_for(user: User) -> dict[str, Any]:
 
 
 @app.get("/api/status/{ticker}")
-async def status(
+def status(
     ticker: str, code: str | None = None, depth: str | None = None, user: User | None = Depends(optional_user)
 ) -> dict[str, Any]:
     """Would opening this ticker at this depth be free (running, or recently analyzed at least this deep)?"""
@@ -195,7 +206,7 @@ async def status(
 
 
 @app.get("/api/recent")
-async def recent() -> list[dict[str, Any]]:
+def recent() -> list[dict[str, Any]]:
     """Stocks analyzed recently: free for anyone to open."""
     return cache.recent_runs()
 
@@ -248,32 +259,36 @@ class LiveRun:
             await self.publish({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
         finally:
             completed = bool(self.events) and self.events[-1]["type"] == "done"
-            try:
-                if completed:
-                    cache.save_run(self.symbol, self.events, self.depth)
-                    cache.record_verdict(self.events[-1]["run"])
-                    if self.user_id:
-                        cache.save_for_user(self.user_id, self.symbol, self.events)
-                elif self.invite_code:
-                    cache.refund_credit(self.invite_code, self.credits)  # don't charge for a run that failed
-                elif self.user_id and self.credits:
-                    cache.refund_account_credits(self.user_id, self.credits)
-            except Exception:  # noqa: BLE001 - storage hiccups must not leave followers hanging
-                pass
-            try:
-                cache.record_usage(
-                    self.symbol,
-                    started,
-                    "done" if completed else "failed",
-                    self.invite_code,
-                    tracker.summary(),
-                    self.depth,
-                    self.user_id,
-                )
-            except Exception:  # noqa: BLE001 - accounting must never break a run
-                pass
+            await asyncio.to_thread(self._store, completed, started, tracker.summary())
             await self.publish(None)
             _live.pop(self.symbol, None)
+
+    def _store(self, completed: bool, started: float, costs: dict[str, Any]) -> None:
+        """Save the finished run (or refund a failed one) and log its cost. Runs on a worker thread."""
+        try:
+            if completed:
+                cache.save_run(self.symbol, self.events, self.depth)
+                cache.record_verdict(self.events[-1]["run"])
+                if self.user_id:
+                    cache.save_for_user(self.user_id, self.symbol, self.events)
+            elif self.invite_code:
+                cache.refund_credit(self.invite_code, self.credits)  # don't charge for a run that failed
+            elif self.user_id and self.credits:
+                cache.refund_account_credits(self.user_id, self.credits)
+        except Exception:  # noqa: BLE001 - storage hiccups must not leave followers hanging
+            pass
+        try:
+            cache.record_usage(
+                self.symbol,
+                started,
+                "done" if completed else "failed",
+                self.invite_code,
+                costs,
+                self.depth,
+                self.user_id,
+            )
+        except Exception:  # noqa: BLE001 - accounting must never break a run
+            pass
 
     async def follow(self) -> AsyncIterator[dict[str, Any]]:
         sent = 0
@@ -298,7 +313,9 @@ async def analyze(
     symbol = _ticker(ticker)
     profile = get_depth(depth)
     live = _live.get(symbol)
-    cached = None if (refresh or live) else cache.get_run(symbol, profile.id)
+    # Storage calls run on a worker thread so a slow database never freezes the whole server.
+    cached = None if (refresh or live) else await asyncio.to_thread(cache.get_run, symbol, profile.id)
+    live = live or _live.get(symbol)  # a run may have started while we looked
     refusal: AccessDenied | None = None
     if live is None and cached is None and settings.access_mode == "accounts":
         # With accounts, fresh runs start only through POST /api/analyze/{ticker}/start (signed in).
@@ -306,17 +323,22 @@ async def analyze(
     elif live is None and cached is None:
         # A fresh run costs money: check the invite, the per-visitor and daily limits, then charge its credits.
         try:
-            invite = _check_invite(code, profile.credits)
+            invite = await asyncio.to_thread(_check_invite, code, profile.credits)
             _check_rate_limit(_client_ip(request))
             _check_daily_budget()
-            if invite and not cache.consume_credit(invite["code"], profile.credits):
+            if invite and not await asyncio.to_thread(cache.consume_credit, invite["code"], profile.credits):
                 raise AccessDenied("no_credits", "You don't have enough credits left for this depth.")
         except AccessDenied as exc:
             refusal = exc
         else:
             charged = profile.credits if invite else 0
-            live = _live[symbol] = LiveRun(symbol, invite["code"] if invite else None, profile.id, charged)
-            live.task = asyncio.create_task(live.drive())
+            if symbol in _live:  # someone else started it meanwhile: follow theirs, refund ours
+                live = _live[symbol]
+                if charged:
+                    await asyncio.to_thread(cache.refund_credit, invite["code"], charged)
+            else:
+                live = _live[symbol] = LiveRun(symbol, invite["code"] if invite else None, profile.id, charged)
+                live.task = asyncio.create_task(live.drive())
 
     async def stream() -> AsyncIterator[str]:
         if refusal is not None:
@@ -345,21 +367,24 @@ async def start_analysis(
     profile = get_depth(depth)
     if symbol in _live:
         return {"state": "running", "depth": _live[symbol].depth}
-    if cache.get_run(symbol, profile.id) is not None:
+    if await asyncio.to_thread(cache.get_run, symbol, profile.id) is not None:
         return {"state": "cached"}
-    account = _account_for(user)
+    account = await asyncio.to_thread(_account_for, user)
     try:
         if account["remaining"] < profile.credits:
             raise AccessDenied("no_credits", "You don't have enough credits for this depth.")
         _check_rate_limit(f"user:{user.id}")
         _check_rate_limit(_client_ip(request))
         _check_daily_budget()
-        if not cache.consume_account_credits(user.id, profile.credits):
+        if not await asyncio.to_thread(cache.consume_account_credits, user.id, profile.credits):
             raise AccessDenied("no_credits", "You don't have enough credits for this depth.")
     except AccessDenied as exc:
         raise HTTPException(
             402 if exc.reason == "no_credits" else 429, {"reason": exc.reason, "message": exc.message}
         ) from exc
+    if symbol in _live:  # someone else started it while we were charging: refund, follow theirs
+        await asyncio.to_thread(cache.refund_account_credits, user.id, profile.credits)
+        return {"state": "running", "depth": _live[symbol].depth, "remaining": account["remaining"]}
     live = _live[symbol] = LiveRun(symbol, None, profile.id, profile.credits, user.id)
     live.task = asyncio.create_task(live.drive())
     return {"state": "started", "depth": profile.id, "remaining": account["remaining"] - profile.credits}
@@ -389,13 +414,13 @@ class ImportBody(BaseModel):
 
 
 @app.get("/api/me")
-async def me(user: User = Depends(require_user)) -> dict[str, Any]:
+def me(user: User = Depends(require_user)) -> dict[str, Any]:
     account = _account_for(user)
     return {**account, "is_admin": user.is_admin, "free_credits": settings.free_credits}
 
 
 @app.post("/api/me/redeem")
-async def redeem(body: Redeem, user: User = Depends(require_user)) -> dict[str, Any]:
+def redeem(body: Redeem, user: User = Depends(require_user)) -> dict[str, Any]:
     _account_for(user)
     added, error = cache.redeem_invite(user.id, body.code)
     if error:
@@ -404,12 +429,12 @@ async def redeem(body: Redeem, user: User = Depends(require_user)) -> dict[str, 
 
 
 @app.get("/api/me/history")
-async def my_history(user: User = Depends(require_user)) -> list[dict[str, Any]]:
+def my_history(user: User = Depends(require_user)) -> list[dict[str, Any]]:
     return cache.list_saved(user.id)
 
 
 @app.get("/api/me/history/{rid}")
-async def my_saved_run(rid: str, user: User = Depends(require_user)) -> dict[str, Any]:
+def my_saved_run(rid: str, user: User = Depends(require_user)) -> dict[str, Any]:
     run = cache.get_saved(user.id, rid)
     if not run:
         raise HTTPException(404, "Not found.")
@@ -417,13 +442,13 @@ async def my_saved_run(rid: str, user: User = Depends(require_user)) -> dict[str
 
 
 @app.delete("/api/me/history/{rid}")
-async def delete_my_run(rid: str, user: User = Depends(require_user)) -> dict[str, bool]:
+def delete_my_run(rid: str, user: User = Depends(require_user)) -> dict[str, bool]:
     cache.delete_saved(user.id, None if rid == "all" else rid)
     return {"ok": True}
 
 
 @app.post("/api/me/history/save")
-async def save_cached_for_me(body: SaveCached, user: User = Depends(require_user)) -> dict[str, Any]:
+def save_cached_for_me(body: SaveCached, user: User = Depends(require_user)) -> dict[str, Any]:
     """Keep a copy of a recently analyzed (cached) stock in this account's history."""
     events = cache.get_run(_ticker(body.ticker), get_depth(body.depth).id if body.depth else "quick")
     if not events:
@@ -432,7 +457,7 @@ async def save_cached_for_me(body: SaveCached, user: User = Depends(require_user
 
 
 @app.post("/api/me/history/import")
-async def import_history(body: ImportBody, user: User = Depends(require_user)) -> dict[str, int]:
+def import_history(body: ImportBody, user: User = Depends(require_user)) -> dict[str, int]:
     """Move reports saved in this browser (before signing in) into the account."""
     saved = 0
     for entry in body.entries:
@@ -470,7 +495,7 @@ class InviteChange(BaseModel):
 
 
 @app.get("/api/admin/stats")
-async def admin_stats(
+def admin_stats(
     x_admin_key: str | None = Header(default=None), authorization: str | None = Header(default=None)
 ) -> dict[str, Any]:
     _require_admin(x_admin_key, authorization)
@@ -492,7 +517,7 @@ async def admin_stats(
 
 
 @app.get("/api/admin/invites")
-async def admin_list_invites(
+def admin_list_invites(
     x_admin_key: str | None = Header(default=None), authorization: str | None = Header(default=None)
 ) -> list[dict[str, Any]]:
     _require_admin(x_admin_key, authorization)
@@ -500,7 +525,7 @@ async def admin_list_invites(
 
 
 @app.post("/api/admin/invites")
-async def admin_create_invite(
+def admin_create_invite(
     body: NewInvite, x_admin_key: str | None = Header(default=None), authorization: str | None = Header(default=None)
 ) -> dict[str, Any]:
     _require_admin(x_admin_key, authorization)
@@ -508,7 +533,7 @@ async def admin_create_invite(
 
 
 @app.post("/api/admin/invites/{code}")
-async def admin_update_invite(
+def admin_update_invite(
     code: str,
     body: InviteChange,
     x_admin_key: str | None = Header(default=None),
@@ -526,7 +551,7 @@ class CreditChange(BaseModel):
 
 
 @app.get("/api/admin/accounts")
-async def admin_accounts(
+def admin_accounts(
     x_admin_key: str | None = Header(default=None), authorization: str | None = Header(default=None)
 ) -> list[dict[str, Any]]:
     _require_admin(x_admin_key, authorization)
@@ -534,7 +559,7 @@ async def admin_accounts(
 
 
 @app.post("/api/admin/accounts/{user_id}/credits")
-async def admin_account_credits(
+def admin_account_credits(
     user_id: str,
     body: CreditChange,
     x_admin_key: str | None = Header(default=None),
