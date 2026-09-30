@@ -3,18 +3,15 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
+import { useDepthCosts } from "@/components/AccessWidgets";
 import { meChanged, useAuth } from "@/lib/auth";
 import { fetchPlans, money, openPortal, type Plan, startCheckout } from "@/lib/billing";
-
-const COSTS = [
-  { label: "Quick", icon: "⚡", credits: 1 },
-  { label: "Standard", icon: "⚖️", credits: 2 },
-  { label: "Deep", icon: "🔬", credits: 3 },
-];
+import { DEPTH_ICON } from "@/lib/depth";
 
 function PricingPage() {
   const params = useSearchParams();
   const { ready, session, me } = useAuth();
+  const costs = useDepthCosts();
   const [plans, setPlans] = useState<{ enabled: boolean; plans: Plan[] } | null | undefined>(undefined);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,9 +65,9 @@ function PricingPage() {
           Pay for the analyses you run. Every stock someone analyzed recently is free to open, and failed analyses are refunded automatically.
         </p>
         <div className="mt-5 inline-flex flex-wrap justify-center gap-2 text-sm">
-          {COSTS.map((c) => (
-            <span key={c.label} className="rounded-full bg-white/5 px-3 py-1 text-zinc-300 ring-1 ring-white/10">
-              {c.icon} {c.label} = {c.credits} {c.credits === 1 ? "credit" : "credits"}
+          {costs.depths.map((c) => (
+            <span key={c.id} className="rounded-full bg-white/5 px-3 py-1 text-zinc-300 ring-1 ring-white/10">
+              {DEPTH_ICON[c.id]} {c.label} = {c.credits} {c.credits === 1 ? "credit" : "credits"}
             </span>
           ))}
         </div>
@@ -151,7 +148,8 @@ function PricingPage() {
                     {p.kind === "subscription" ? " every month" : ", one time"}
                   </li>
                   <li>
-                    ≈ {Math.floor(p.credits / 2)} Standard or {p.credits} Quick analyses
+                    ≈ {Math.floor(p.credits / costs.credits("standard"))} Standard or {Math.floor(p.credits / costs.credits("quick"))} Quick
+                    analyses
                   </li>
                   {perCredit !== null && <li className="text-zinc-500">{money({ ...p.price!, amount: perCredit, interval: null })} per credit</li>}
                   <li className="text-zinc-500">{p.kind === "subscription" ? "Unused credits roll over. Cancel anytime." : "Credits never expire."}</li>

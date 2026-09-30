@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { type Access, CREDITS_EVENT, fetchAccess, getCode, setCode } from "@/lib/access";
 import { authFetch, meChanged, useAuth } from "@/lib/auth";
+import { DEFAULT_DEPTHS, type DepthOption } from "@/lib/depth";
 
 /** Keeps the header pill and banners in sync with the server's view of this visitor's credits. */
 export function useAccess(): Access | null {
@@ -158,4 +159,15 @@ export function InviteForm({ onDone }: { onDone?: () => void }) {
 
 export function hasCode(): boolean {
   return !!getCode();
+}
+
+/** Credits per depth as the server charges them (falls back to the defaults while loading). */
+export function useDepthCosts(): { depths: DepthOption[]; text: string; credits: (id: string) => number } {
+  const access = useAccess();
+  const depths = access?.depths?.length ? access.depths : DEFAULT_DEPTHS;
+  return {
+    depths,
+    text: depths.map((d) => `${d.label} ${d.credits}`).join(", "),
+    credits: (id) => depths.find((d) => d.id === id)?.credits ?? 1,
+  };
 }

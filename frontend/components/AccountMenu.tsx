@@ -4,11 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
-import { CreditPill, useAccess } from "./AccessWidgets";
+import { CreditPill, useAccess, useDepthCosts } from "./AccessWidgets";
 
 /** Header: credits + account dropdown when signed in, "Log in / Sign up free" otherwise. */
 export default function AccountMenu() {
   const access = useAccess();
+  const costs = useDepthCosts();
   const { ready, session, me, signOut } = useAuth();
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -74,7 +75,7 @@ export default function AccountMenu() {
           <div className="border-b border-white/10 px-4 py-3">
             <div className="truncate text-sm text-zinc-200">{email}</div>
             <div className="mt-0.5 text-xs text-zinc-500">
-              {n ?? "…"} credits left · Quick 1, Standard 2, Deep 3
+              {n ?? "…"} credits left · {costs.text}
             </div>
           </div>
           <MenuLink href="/pricing">{me?.plan && me.plan_status !== "canceled" ? "Plan & credits" : "Buy credits"}</MenuLink>

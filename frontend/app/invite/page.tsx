@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { InviteForm, redeemCode, useAccess } from "@/components/AccessWidgets";
+import { InviteForm, redeemCode, useAccess, useDepthCosts } from "@/components/AccessWidgets";
 import { setCode } from "@/lib/access";
 import { useAuth } from "@/lib/auth";
 
@@ -14,6 +14,7 @@ export default function InvitePage() {
 
 /** Accounts: redeem a code, adding its credits to your account. */
 function RedeemPage() {
+  const costs = useDepthCosts();
   const { ready, session, me } = useAuth();
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -32,7 +33,7 @@ function RedeemPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Redeem a code</h1>
         <p className="mt-1 text-sm text-zinc-400">
-          Codes add credits to your account. Fresh analyses use credits by depth: Quick 1, Standard 2, Deep 3. Opening a stock someone analyzed recently, or a
+          Codes add credits to your account. Fresh analyses use credits by depth: {costs.text}. Opening a stock someone analyzed recently, or a
           report in your History, is always free.
         </p>
       </div>
@@ -74,6 +75,7 @@ function RedeemPage() {
 
 function LegacyInvitePage() {
   const access = useAccess();
+  const costs = useDepthCosts();
   const invite = access?.valid ? access.invite : null;
 
   return (
@@ -81,7 +83,7 @@ function LegacyInvitePage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Your invite</h1>
         <p className="mt-1 text-sm text-zinc-400">
-          Each fresh analysis uses credits by depth: Quick 1, Standard 2, Deep 3. Opening a stock someone analyzed recently, or a report in your History, is always free.
+          Each fresh analysis uses credits by depth: {costs.text}. Opening a stock someone analyzed recently, or a report in your History, is always free.
         </p>
       </div>
 
