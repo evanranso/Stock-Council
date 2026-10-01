@@ -15,6 +15,7 @@ export interface Me {
   remaining: number;
   free_granted: boolean;
   is_admin: boolean;
+  unlimited?: boolean;
   free_credits: number;
   plan?: "plus" | "pro" | null;
   plan_status?: string | null;

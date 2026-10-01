@@ -203,6 +203,7 @@ def status(
         "invite": _public_invite(invite),
         "signed_in": user is not None,
         "remaining": account["remaining"] if account else None,
+        "unlimited": bool(user and user.is_admin),
         "depths": [d.public() for d in all_depths()],
     }
 
@@ -372,6 +373,11 @@ async def start_analysis(
     if await asyncio.to_thread(cache.get_run, symbol, profile.id) is not None:
         return {"state": "cached"}
     account = await asyncio.to_thread(_account_for, user)
+    if user.is_admin:
+        # The site owner (ADMIN_EMAILS): no credits charged and no per-user or daily limits.
+        live = _live[symbol] = LiveRun(symbol, None, profile.id, 0, user.id)
+        live.task = asyncio.create_task(live.drive())
+        return {"state": "started", "depth": profile.id, "remaining": account["remaining"], "unlimited": True}
     try:
         if account["remaining"] < profile.credits:
             raise AccessDenied("no_credits", "You don't have enough credits for this depth.")
@@ -418,7 +424,8 @@ class ImportBody(BaseModel):
 @app.get("/api/me")
 def me(user: User = Depends(require_user)) -> dict[str, Any]:
     account = _account_for(user)
-    return {**account, "is_admin": user.is_admin, "free_credits": settings.free_credits}
+    # Admins (ADMIN_EMAILS) run analyses without spending credits; it's the owner's own API bill.
+    return {**account, "is_admin": user.is_admin, "unlimited": user.is_admin, "free_credits": settings.free_credits}
 
 
 @app.post("/api/me/redeem")

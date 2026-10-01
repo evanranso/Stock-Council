@@ -16,7 +16,7 @@ import Report from "./Report";
 
 type Phase =
   | { kind: "checking" }
-  | { kind: "confirm"; mode: AccessMode; remaining?: number; depths: DepthOption[]; error?: string }
+  | { kind: "confirm"; mode: AccessMode; remaining?: number; depths: DepthOption[]; error?: string; unlimited?: boolean }
   | { kind: "gate"; reason: string }
   | { kind: "starting" }
   | { kind: "unreachable" }
@@ -30,7 +30,7 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const state = useMemo(() => replay(ticker, events), [ticker, events]);
   const saved = useRef(false);
-  const { ready, session } = useAuth();
+  const { ready, session, me } = useAuth();
   const [attempt, setAttempt] = useState(0);
   const signedIn = !!session;
 
@@ -49,6 +49,7 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
       const cheapest = Math.min(...depths.map((d) => d.credits));
       if (s.mode === "accounts") {
         if (!s.signed_in) return setPhase({ kind: "gate", reason: "sign_in" });
+        if (s.unlimited) return setPhase({ kind: "confirm", mode: "accounts", depths, unlimited: true });
         if ((s.remaining ?? 0) < cheapest) return setPhase({ kind: "gate", reason: "no_credits" });
         return setPhase({ kind: "confirm", mode: "accounts", remaining: s.remaining ?? 0, depths });
       }
@@ -133,9 +134,9 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
       if (res.status === 401 || res.status === 403) return setPhase({ kind: "gate", reason: res.status === 403 ? "verify_email" : "sign_in" });
       if (reason === "no_credits") return setPhase({ kind: "gate", reason: "no_credits" });
       const message = body?.detail?.message ?? (typeof body?.detail === "string" ? body.detail : "Couldn't start the analysis. Try again in a minute.");
-      setPhase({ kind: "confirm", mode: "accounts", depths, remaining, error: message });
+      setPhase({ kind: "confirm", mode: "accounts", depths, remaining, error: message, unlimited: me?.unlimited });
     } catch {
-      setPhase({ kind: "confirm", mode: "accounts", depths, remaining, error: "Couldn't reach the server. Try again in a minute." });
+      setPhase({ kind: "confirm", mode: "accounts", depths, remaining, error: "Couldn't reach the server. Try again in a minute.", unlimited: me?.unlimited });
     }
   }
 
@@ -193,7 +194,7 @@ function ConfirmRun({
   initial: DepthId;
   onRun: (d: DepthId, free: boolean) => void;
 }) {
-  const credits = phase.mode === "invite" || phase.mode === "accounts";
+  const credits = (phase.mode === "invite" || phase.mode === "accounts") && !phase.unlimited;
   const affordable = (d: DepthOption) => !credits || (phase.remaining ?? 0) >= d.credits;
   const start = phase.depths.find((d) => d.id === initial && affordable(d)) ?? [...phase.depths].reverse().find(affordable) ?? phase.depths[0];
   const [choice, setChoice] = useState<DepthId>(start.id);
@@ -227,6 +228,7 @@ function ConfirmRun({
           <Link href="/" className="rounded-lg border border-white/10 px-5 py-2.5 text-zinc-300 hover:text-white">
             Cancel
           </Link>
+          {phase.unlimited && <span className="ml-auto text-sm text-zinc-500">Admin account · unlimited, no credits used</span>}
           {credits && (
             <span className="ml-auto text-sm text-zinc-500">
               {phase.remaining} credits left

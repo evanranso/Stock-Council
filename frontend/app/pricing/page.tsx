@@ -86,7 +86,7 @@ function PricingPage() {
           <div className="flex-1">
             <div className="text-sm text-zinc-400">Your balance</div>
             <div className="text-2xl font-bold tabular-nums">
-              {me.remaining} {me.remaining === 1 ? "credit" : "credits"}
+              {me.unlimited ? "Unlimited (admin)" : `${me.remaining} ${me.remaining === 1 ? "credit" : "credits"}`}
             </div>
             {activePlan && (
               <div className="mt-1 text-sm text-zinc-400">

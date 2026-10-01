@@ -31,6 +31,7 @@ export interface TickerStatus {
   invite?: Invite | null;
   signed_in?: boolean;
   remaining?: number | null;
+  unlimited?: boolean;
   depth?: DepthId;
   depths?: DepthOption[];
 }

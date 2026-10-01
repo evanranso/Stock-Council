@@ -221,3 +221,24 @@ def test_admin_by_email(client):
         headers=bearer(sub="boss", email="boss@example.com"),
     ).json()
     assert topped["remaining"] == 14
+
+
+def test_admin_runs_without_credits_or_limits(client, monkeypatch):
+    monkeypatch.setattr(main, "run_council", council())
+    monkeypatch.setattr(main, "settings", dataclasses.replace(main.settings, rate_limit_per_hour=1, max_runs_per_day=1))
+    boss = {"sub": "boss", "email": "boss@example.com"}
+    client.post("/api/analyze/AAA/start?depth=standard", headers=bearer(**boss))  # 4 credits -> would leave 2
+    wait_idle("AAA")
+    assert client.get("/api/me", headers=bearer(**boss)).json()["unlimited"] is True
+    for sym in ("BBB", "CCC", "DDD"):  # beyond credits, the hourly limit and the daily cap
+        started = client.post(f"/api/analyze/{sym}/start?depth=deep", headers=bearer(**boss))
+        assert started.status_code == 200 and started.json()["state"] == "started"
+        wait_idle(sym)
+    me = client.get("/api/me", headers=bearer(**boss)).json()
+    assert me["remaining"] == 4  # never charged
+    assert client.get("/api/status/EEE", headers=bearer(**boss)).json()["unlimited"] is True
+    # Everyone else is still limited.
+    assert client.get("/api/status/EEE", headers=bearer()).json()["unlimited"] is False
+    client.post("/api/analyze/FFF/start?depth=deep", headers=bearer())  # 3 of 4
+    wait_idle("FFF")
+    assert client.post("/api/analyze/GGG/start?depth=deep", headers=bearer()).status_code == 402

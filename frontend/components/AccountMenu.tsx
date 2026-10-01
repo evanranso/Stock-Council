@@ -64,10 +64,14 @@ export default function AccountMenu() {
         <span className="grid h-6 w-6 place-items-center rounded-full bg-gradient-to-br from-brand-500 to-accent-500 text-xs font-bold uppercase text-white">
           {email.slice(0, 1) || "?"}
         </span>
-        {n !== undefined && (
-          <span className={`text-xs font-medium tabular-nums ${n > 0 ? "text-brand-200" : "text-rose-200"}`}>
-            {n} {n === 1 ? "credit" : "credits"}
-          </span>
+        {me?.unlimited ? (
+          <span className="text-xs font-medium text-brand-200">Unlimited</span>
+        ) : (
+          n !== undefined && (
+            <span className={`text-xs font-medium tabular-nums ${n > 0 ? "text-brand-200" : "text-rose-200"}`}>
+              {n} {n === 1 ? "credit" : "credits"}
+            </span>
+          )
         )}
       </button>
       {open && (
@@ -75,7 +79,7 @@ export default function AccountMenu() {
           <div className="border-b border-white/10 px-4 py-3">
             <div className="truncate text-sm text-zinc-200">{email}</div>
             <div className="mt-0.5 text-xs text-zinc-500">
-              {n ?? "…"} credits left · {costs.text}
+              {me?.unlimited ? "Admin: unlimited analyses" : `${n ?? "…"} credits left · ${costs.text}`}
             </div>
           </div>
           <MenuLink href="/pricing">{me?.plan && me.plan_status !== "canceled" ? "Plan & credits" : "Buy credits"}</MenuLink>
