@@ -113,6 +113,15 @@ export type CouncilEvent =
       as_of?: string;
       highlights?: Highlights;
     }
+  | {
+      type: "analyst_progress";
+      analyst_id: string;
+      step: "fetching" | "fetched" | "reading";
+      status?: "ok" | "partial" | "unavailable";
+      sources?: string[];
+      found?: string[];
+      metrics?: Metric[];
+    }
   | { type: "scores"; phase: "baseline" | "adjusted"; scores: Scores }
   | { type: "stage"; stage: "debate" | "challenge" | "verdict" }
   | { type: "case"; side: "bull" | "bear"; case: CaseReport }

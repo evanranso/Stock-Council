@@ -11,7 +11,7 @@ from .. import scoring, usage
 from ..config import get_settings
 from ..data import _yf, sec
 from ..data.base import in_thread
-from ..data.highlights import highlights
+from ..data.highlights import highlights, scope
 from ..data.registry import ADAPTERS
 from ..depth import get_depth
 from ..schemas import AnalystReport, CouncilRun, DataPacket, HorizonScore
@@ -40,16 +40,49 @@ async def run_council(ticker: str, depth: str | None = None) -> AsyncIterator[Ev
     }
 
     # Stage 1: fetch each packet and run its specialist; all 12 in parallel, fully isolated.
+    # Each analyst also reports what it's doing ("fetching", "fetched" with what it found,
+    # "reading"), so people can watch the research happen instead of a spinner.
     limit = asyncio.Semaphore(settings.max_parallel_agents)
+    feed: asyncio.Queue[Event] = asyncio.Queue()
+
+    def step(spec_id: str, name: str, **extra: Any) -> None:
+        feed.put_nowait({"type": "analyst_progress", "analyst_id": spec_id, "step": name, **extra})
 
     async def one(spec) -> tuple[DataPacket, AnalystReport]:
+        step(spec.id, "fetching")
         packet = await ADAPTERS[spec.segment](ticker)
+        step(
+            spec.id,
+            "fetched",
+            status=packet.status,
+            sources=packet.sources,
+            found=scope(packet),
+            metrics=[m.model_dump() if hasattr(m, "model_dump") else m for m in highlights(packet)["metrics"][:2]],
+        )
         async with limit:
+            if packet.status != "unavailable":
+                step(spec.id, "reading")
             return packet, await run_specialist(spec, packet, profile.analyst_effort, profile.analyst_model)
 
-    tasks = [asyncio.create_task(one(s)) for s in SPECIALISTS]
-    for done in asyncio.as_completed(tasks):
-        packet, report = await done
+    async def run_one(spec) -> None:
+        try:
+            packet, report = await one(spec)
+        except Exception as exc:  # noqa: BLE001 - adapters are guarded; this is a last resort
+            packet = DataPacket(segment=spec.segment, ticker=ticker, status="unavailable", notes=[str(exc)])
+            report = AnalystReport(
+                analyst_id=spec.id, analyst_name=spec.name, packet_status="unavailable", error=str(exc)
+            )
+        feed.put_nowait({"type": "_done", "packet": packet, "report": report})
+
+    tasks = [asyncio.create_task(run_one(s)) for s in SPECIALISTS]
+    remaining = len(tasks)
+    while remaining:
+        event = await feed.get()
+        if event["type"] != "_done":
+            yield event
+            continue
+        remaining -= 1
+        packet, report = event["packet"], event["report"]
         run.analysts.append(report)
         if packet.segment == "price":
             # Logged with the verdict so later runs can check how the call played out.

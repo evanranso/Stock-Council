@@ -1,5 +1,7 @@
 """End-to-end council run with fake data and a fake model: checks isolation, event flow, and scoring wiring."""
 
+import json
+
 import pytest
 
 from app import scoring
@@ -135,3 +137,19 @@ async def test_depth_picks_models_per_stage(fake_world, monkeypatch):
     debate_models = {m for name, m, _ in calls if name != "AnalystOpinion"}
     assert analyst_models == {"claude-sonnet-5-5"}
     assert debate_models == {pipeline.get_settings().claude_model}
+
+
+async def test_analysts_report_live_progress(fake_world):
+    events = [e async for e in pipeline.run_council("FAKE")]
+    for spec in specialists.SPECIALISTS:
+        steps = [e for e in events if e.get("analyst_id") == spec.id and e["type"] == "analyst_progress"]
+        names = [e["step"] for e in steps]
+        assert names[:2] == ["fetching", "fetched"], (spec.id, names)
+        fetched = steps[1]
+        done_at = next(
+            i for i, e in enumerate(events) if e["type"] == "analyst" and e["report"]["analyst_id"] == spec.id
+        )
+        assert all(events.index(e) < done_at for e in steps)  # progress always precedes the result
+        if fetched["status"] != "unavailable":
+            assert names == ["fetching", "fetched", "reading"] and "sources" in fetched
+    json.dumps(events)  # everything streamed must be plain JSON

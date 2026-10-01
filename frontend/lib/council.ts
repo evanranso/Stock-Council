@@ -1,5 +1,24 @@
 // Folds the stream of council events into page state. Used for live runs and saved history alike.
-import type { AnalystReport, CaseReport, ChallengeReport, Highlights, Scores, StoredEvent, Verdict } from "./types";
+import type { AnalystReport, CaseReport, ChallengeReport, Highlights, Metric, Scores, StoredEvent, Verdict } from "./types";
+
+/** What an analyst is doing right now, while the council runs. */
+export interface AnalystProgress {
+  step: "fetching" | "fetched" | "reading";
+  status?: "ok" | "partial" | "unavailable";
+  sources: string[];
+  found: string[];
+  metrics: Metric[];
+}
+
+/** One line in the live activity feed. */
+export interface FeedItem {
+  id: number;
+  analystId: string;
+  step: AnalystProgress["step"] | "done";
+  status?: AnalystProgress["status"];
+  sources: string[];
+  found: string[];
+}
 
 export interface AnalystEntry {
   report: AnalystReport;
@@ -17,6 +36,8 @@ export interface CouncilState {
   depth?: "quick" | "standard" | "deep";
   stage: Stage;
   analysts: Record<string, AnalystEntry>;
+  progress: Record<string, AnalystProgress>;
+  feed: FeedItem[];
   baseline?: Scores;
   adjusted?: Scores;
   bull?: CaseReport;
@@ -29,7 +50,7 @@ export interface CouncilState {
 }
 
 export function initialState(ticker: string): CouncilState {
-  return { ticker, companyName: null, stage: "connecting", analysts: {}, cached: false };
+  return { ticker, companyName: null, stage: "connecting", analysts: {}, progress: {}, feed: [], cached: false };
 }
 
 export function reduce(state: CouncilState, event: StoredEvent): CouncilState {
@@ -37,6 +58,24 @@ export function reduce(state: CouncilState, event: StoredEvent): CouncilState {
   switch (event.type) {
     case "start":
       return { ...s, companyName: event.company_name, depth: event.depth, stage: "analysts" };
+    case "analyst_progress": {
+      const prev = s.progress[event.analyst_id];
+      const next: AnalystProgress = {
+        step: event.step,
+        status: event.status ?? prev?.status,
+        sources: event.sources ?? prev?.sources ?? [],
+        found: event.found ?? prev?.found ?? [],
+        metrics: event.metrics ?? prev?.metrics ?? [],
+      };
+      const item: FeedItem = { id: s.feed.length ? s.feed[s.feed.length - 1].id + 1 : 0, analystId: event.analyst_id, step: event.step, status: next.status, sources: next.sources, found: next.found };
+      return {
+        ...s,
+        stage: s.stage === "connecting" ? "analysts" : s.stage,
+        progress: { ...s.progress, [event.analyst_id]: next },
+        // "fetching" is implied for everyone at the start; keep the feed for real findings.
+        feed: event.step === "fetching" ? s.feed : [...s.feed, item].slice(-40),
+      };
+    }
     case "analyst":
       return {
         ...s,

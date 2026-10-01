@@ -186,3 +186,115 @@ def highlights(packet: DataPacket) -> dict[str, Any]:
     except Exception:  # noqa: BLE001 - highlights are decoration; never break a run over them
         return {"metrics": [], "series": None}
     return {"metrics": [m for m in metrics if m is not None], "series": series}
+
+
+# --- What each analyst actually pulled, in plain words (shown live while the council runs) ---
+
+
+def _n(x: Any) -> int:
+    return len(x) if isinstance(x, (list, dict)) else 0
+
+
+def _scope_price(d: dict) -> list[str]:
+    return ["2 years of daily prices", f"latest close {d['last_date']}" if d.get("last_date") else ""]
+
+
+def _scope_financials(d: dict) -> list[str]:
+    q = _n(_get(d, "quarterly_last_8", "period_ends"))
+    y = _n(_get(d, "annual_last_5", "fiscal_year_ends"))
+    rep = d.get("latest_report") or {}
+    span = " + ".join(p for p in (f"{q} quarters" if q else "", f"{y} fiscal years" if y else "") if p)
+    return [
+        f"{span} of statements" if span else "",
+        f"latest {rep.get('form')} filed {rep.get('filed')}" if rep.get("form") else "",
+    ]
+
+
+def _scope_analysts(d: dict) -> list[str]:
+    months = _n(d.get("recommendation_trend_by_month")) or _n(d.get("rating_mix_by_month"))
+    return [
+        f"{months} months of rating trends" if months else "",
+        "price targets" if d.get("price_targets") else "",
+        f"{_n(d.get('recent_rating_changes'))} recent upgrades/downgrades" if d.get("recent_rating_changes") else "",
+    ]
+
+
+def _scope_earnings(d: dict) -> list[str]:
+    eps = _n(_get(d, "reported_results_sec", "eps_diluted"))
+    return [
+        f"{eps} quarters of reported EPS and revenue" if eps else "",
+        f"beat/miss history for {_n(d.get('surprises_last_4q'))} quarters" if d.get("surprises_last_4q") else "",
+        "next report date" if d.get("upcoming_report") else "",
+    ]
+
+
+def _scope_insiders(d: dict) -> list[str]:
+    filings = d.get("form4_filings_read") or 0
+    return [
+        f"{filings} Form 4 filings (12 months)" if filings else "",
+        # Zero is a real finding here: insiders neither bought nor sold on the open market.
+        f"{_n(d.get('open_market_trades'))} open-market trades" if filings else "",
+    ]
+
+
+def _scope_news(d: dict) -> list[str]:
+    found = d.get("articles_found_21d") or _n(d.get("articles"))
+    kept = _n(d.get("articles"))
+    return [
+        f"{found} articles from the last 3 weeks" if found else "",
+        f"{kept} most relevant kept" if kept and kept < found else "",
+    ]
+
+
+def _scope_filings(d: dict) -> list[str]:
+    total = sum((d.get("filing_counts_last_12m") or {}).values())
+    per = d.get("latest_periodic") or {}
+    return [
+        f"{total} filings in the last 12 months" if total else "",
+        f"{per.get('form')} from {per.get('date')}: risk factors + MD&A" if per.get("form") else "",
+        f"{_n(d.get('recent_8k'))} recent 8-K reports" if d.get("recent_8k") else "",
+    ]
+
+
+def _scope_options(d: dict) -> list[str]:
+    exps = d.get("expirations") or []
+    return [f"{len(exps)} option expirations" if exps else "", f"nearest {exps[0].get('expiration')}" if exps else ""]
+
+
+def _scope_economy(d: dict) -> list[str]:
+    n = _n(d.get("indicators"))
+    return [f"{n} economic indicators" if n else "", "rates, inflation, jobs, credit" if n else ""]
+
+
+def _scope_related(d: dict) -> list[str]:
+    peers = _n(d.get("peers"))
+    markets = _n(d.get("macro_markets"))
+    return [
+        f"{markets} broad markets" if markets else "",
+        "its sector ETF" if d.get("sector_etf") else "",
+        f"{peers} peer stocks" if peers else "",
+    ]
+
+
+SCOPES = {
+    "price": _scope_price,
+    "financials": _scope_financials,
+    "analysts": _scope_analysts,
+    "earnings": _scope_earnings,
+    "insiders": _scope_insiders,
+    "news": _scope_news,
+    "filings": _scope_filings,
+    "options": _scope_options,
+    "economy": _scope_economy,
+    "related": _scope_related,
+}
+
+
+def scope(packet: DataPacket) -> list[str]:
+    """Up to three short phrases describing what was pulled, e.g. '40 articles from the last 3 weeks'."""
+    if packet.status == "unavailable":
+        return []
+    try:
+        return [s for s in SCOPES.get(packet.segment, lambda d: [])(packet.data) if s][:3]
+    except Exception:  # noqa: BLE001 - decoration only
+        return []

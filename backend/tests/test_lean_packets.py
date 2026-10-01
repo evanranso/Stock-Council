@@ -54,3 +54,23 @@ def test_economy_reports_trend_not_every_point():
     days = [date(2026, 9, 1), date(2026, 9, 1) - timedelta(days=365)]
     cpi = [{"date": d.isoformat(), "value": v} for d, v in zip(days, [103, 100], strict=True)]
     assert economy.summarize_series("CPIAUCSL", "CPI", cpi)["yoy_pct"] == 3.0
+
+
+def test_scope_describes_what_was_pulled():
+    from app.data.highlights import scope
+
+    fin = DataPacket(
+        segment="financials",
+        ticker="X",
+        data={
+            "quarterly_last_8": {"period_ends": ["q"] * 8},
+            "annual_last_5": {"fiscal_year_ends": ["y"] * 5},
+            "latest_report": {"form": "10-Q", "filed": "2026-07-31"},
+        },
+    )
+    assert scope(fin) == ["8 quarters + 5 fiscal years of statements", "latest 10-Q filed 2026-07-31"]
+    ins = DataPacket(segment="insiders", ticker="X", data={"form4_filings_read": 60, "open_market_trades": []})
+    assert scope(ins) == ["60 Form 4 filings (12 months)", "0 open-market trades"]  # zero is a real finding
+    news_p = DataPacket(segment="news", ticker="X", data={"articles": [{}] * 20, "articles_found_21d": 40})
+    assert scope(news_p) == ["40 articles from the last 3 weeks", "20 most relevant kept"]
+    assert scope(DataPacket(segment="news", ticker="X", status="unavailable")) == []
