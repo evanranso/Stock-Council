@@ -79,7 +79,7 @@ export default function CommunityPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Community analyses</h1>
         <p className="mt-1 text-sm text-zinc-400">
-          Every analysis anyone has run on Stock Council. Filter for the strongest calls, then open any report for free. Older reports reflect the
+          Every analysis anyone has run on Stock Council. Filter for the strongest calls, then open any report free with an account. Older reports reflect the
           data at the time they ran.
         </p>
       </div>

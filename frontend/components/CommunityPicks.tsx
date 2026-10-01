@@ -20,7 +20,7 @@ export default function CommunityPicks() {
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h2 className="text-lg font-semibold">What the community is analyzing</h2>
-          <p className="text-sm text-zinc-500">The latest analyses from everyone on Stock Council. Opening one is free.</p>
+          <p className="text-sm text-zinc-500">The latest analyses from everyone on Stock Council. Free to read with an account.</p>
         </div>
         <Link href="/community" className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-brand-200 hover:border-brand-400/50 hover:text-white">
           Browse all analyses →

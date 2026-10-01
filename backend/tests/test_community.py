@@ -5,7 +5,7 @@ import time
 
 from fastapi.testclient import TestClient
 
-from app import cache, main
+from app import auth, cache, main
 
 
 def events(ticker, weeks, months, years, depth="standard", finished="2026-09-30T12:00:00Z"):
@@ -54,13 +54,18 @@ def test_filters_and_sorting():
         assert [i["ticker"] for i in get(client, days="all", q="meta")["items"]] == ["META"]
 
 
-def test_open_an_analysis_and_time_window():
+def test_open_an_analysis_needs_an_account_and_time_window():
     setup_library()
     with TestClient(main.app) as client:
-        item = get(client, days="all", q="VRA")["items"][0]
-        full = client.get(f"/api/community/{item['id']}").json()
-        assert full["ticker"] == "VRA" and full["events"][-1]["type"] == "done"
-        assert client.get("/api/community/nope").status_code == 404
+        item = get(client, days="all", q="VRA")["items"][0]  # the list itself is public
+        assert client.get(f"/api/community/{item['id']}").status_code == 401  # reading a report is not
+        main.app.dependency_overrides[auth.require_user] = lambda: auth.User("u1", "a@example.com")
+        try:
+            full = client.get(f"/api/community/{item['id']}").json()
+            assert full["ticker"] == "VRA" and full["events"][-1]["type"] == "done"
+            assert client.get("/api/community/nope").status_code == 404
+        finally:
+            main.app.dependency_overrides.clear()
     with cache._db() as conn:
         conn.execute("UPDATE analyses SET created = ? WHERE ticker = 'META'", (time.time() - 10 * 86400,))
     with TestClient(main.app) as client:

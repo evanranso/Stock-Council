@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { CreditPill, useAccess, useDepthCosts } from "./AccessWidgets";
@@ -14,6 +14,7 @@ export default function AccountMenu() {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
+  const router = useRouter();
 
   useEffect(() => setOpen(false), [pathname]);
   useEffect(() => {
@@ -31,20 +32,25 @@ export default function AccountMenu() {
   if (!ready) return <span className="h-7 w-24" />;
 
   if (!session) {
-    // Come back here after logging in; on the login page itself, keep where it was already headed.
-    let next = "";
-    if (typeof window !== "undefined") {
+    // Come back to the current page after logging in. Read at click time: the page may have changed
+    // since this rendered. On the login page itself, keep where it was already headed.
+    const go = (mode: "login" | "signup") => (e: React.MouseEvent) => {
+      e.preventDefault();
       const here = window.location.pathname.startsWith("/login")
         ? new URLSearchParams(window.location.search).get("next")
         : window.location.pathname + window.location.search;
-      if (here) next = `&next=${encodeURIComponent(here)}`;
-    }
+      router.push(`/login?mode=${mode}${here ? `&next=${encodeURIComponent(here)}` : ""}`);
+    };
     return (
       <div className="flex items-center gap-1">
-        <Link href={`/login?mode=login${next}`} className="rounded-lg px-3 py-1.5 text-zinc-300 hover:bg-white/5 hover:text-white">
+        <Link href="/login?mode=login" onClick={go("login")} className="rounded-lg px-3 py-1.5 text-zinc-300 hover:bg-white/5 hover:text-white">
           Log in
         </Link>
-        <Link href={`/login?mode=signup${next}`} className="rounded-lg bg-gradient-to-r from-brand-500 to-accent-500 px-3 py-1.5 font-semibold text-white shadow shadow-brand-500/25 hover:brightness-110">
+        <Link
+          href="/login?mode=signup"
+          onClick={go("signup")}
+          className="rounded-lg bg-gradient-to-r from-brand-500 to-accent-500 px-3 py-1.5 font-semibold text-white shadow shadow-brand-500/25 hover:brightness-110"
+        >
           Sign up free
         </Link>
       </div>

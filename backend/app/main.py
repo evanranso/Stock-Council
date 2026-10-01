@@ -266,7 +266,8 @@ def community(
 
 
 @app.get("/api/community/{aid}")
-def community_analysis(aid: str) -> dict[str, Any]:
+def community_analysis(aid: str, user: User = Depends(require_user)) -> dict[str, Any]:
+    """A full community report. The list is public; reading a report needs a (free, verified) account."""
     found = cache.get_analysis(aid)
     if not found:
         raise HTTPException(404, "Analysis not found.")

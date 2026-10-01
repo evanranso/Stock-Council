@@ -44,11 +44,21 @@ function AnalyzePage() {
 function SavedReport({ id, ticker, source = "local" }: { id: string; ticker: string; source?: "local" | "account" | "community" }) {
   const account = source === "account";
   const [events, setEvents] = useState<StoredEvent[] | null | undefined>(undefined);
+  const [needsAccount, setNeedsAccount] = useState(false);
   const { ready, session } = useAuth();
   const signedIn = !!session;
   useEffect(() => {
     if (source === "community") {
-      fetchCommunityAnalysis(id).then((r) => setEvents(r?.events ?? null));
+      if (!ready) return;
+      if (!signedIn) {
+        setNeedsAccount(true);
+        return;
+      }
+      setNeedsAccount(false);
+      fetchCommunityAnalysis(id).then((r) => {
+        if (r === "sign_in") return setNeedsAccount(true);
+        setEvents(r?.events ?? null);
+      });
       return;
     }
     if (!account) return setEvents(getEntry(id)?.events ?? null);
@@ -60,6 +70,7 @@ function SavedReport({ id, ticker, source = "local" }: { id: string; ticker: str
       .catch(() => setEvents(null));
   }, [id, source, account, ready, signedIn]);
 
+  if (needsAccount) return <CommunityGate ticker={ticker} id={id} />;
   if (events === undefined) return <div className="card h-40 animate-pulse" />;
   if (!events) {
     return (
@@ -88,6 +99,28 @@ function SavedReport({ id, ticker, source = "local" }: { id: string; ticker: str
         </Link>
       </div>
       <Report state={replay(ticker, events)} />
+    </div>
+  );
+}
+
+/** Community reports are for account holders: invite visitors to sign up, then bring them right back. */
+function CommunityGate({ ticker, id }: { ticker: string; id: string }) {
+  const next = encodeURIComponent(`/analyze?t=${ticker}&community=${id}`);
+  return (
+    <div className="card fade-up mx-auto max-w-xl p-6 text-center sm:p-8">
+      <p className="text-sm text-brand-300">{ticker} · community analysis</p>
+      <h1 className="mt-1 text-2xl font-bold">Create a free account to read this analysis</h1>
+      <p className="mt-2 text-zinc-400">
+        Every report in the community library is free to read with an account. New accounts also get free credits to run their own analyses.
+      </p>
+      <div className="mt-6 flex justify-center gap-3">
+        <Link href={`/login?mode=signup&next=${next}`} className="rounded-lg bg-gradient-to-r from-brand-500 to-accent-500 px-5 py-2.5 font-semibold text-white shadow-lg shadow-brand-500/25 hover:brightness-110">
+          Sign up free
+        </Link>
+        <Link href={`/login?next=${next}`} className="rounded-lg border border-white/10 px-5 py-2.5 text-zinc-300 hover:text-white">
+          Log in
+        </Link>
+      </div>
     </div>
   );
 }
