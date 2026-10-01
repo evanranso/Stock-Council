@@ -155,10 +155,11 @@ def test_subscription_status_and_cancel(client):
 
 
 class FakeStripe:
-    def __init__(self):
+    def __init__(self, missing=()):
         self.calls = []
+        self.missing = set(missing)
         v1 = SimpleNamespace(
-            customers=SimpleNamespace(create=self._customer),
+            customers=SimpleNamespace(create=self._customer, retrieve=self._retrieve),
             checkout=SimpleNamespace(sessions=SimpleNamespace(create=self._checkout)),
             billing_portal=SimpleNamespace(sessions=SimpleNamespace(create=self._portal)),
         )
@@ -167,6 +168,13 @@ class FakeStripe:
     def _customer(self, params):
         self.calls.append(("customer", params))
         return SimpleNamespace(id="cus_new")
+
+    def _retrieve(self, customer_id):
+        if customer_id in self.missing:
+            import stripe
+
+            raise stripe.InvalidRequestError(f"No such customer: '{customer_id}'", param="id", code="resource_missing")
+        return SimpleNamespace(id=customer_id, deleted=False)
 
     def _checkout(self, params):
         self.calls.append(("checkout", params))
@@ -243,3 +251,17 @@ def test_checkout_rate_limit_is_a_clean_429(client, monkeypatch):
     assert client.post("/api/billing/checkout", json={"plan": "topup"}, headers=bearer()).status_code == 200
     resp = client.post("/api/billing/checkout", json={"plan": "topup"}, headers=bearer())
     assert resp.status_code == 429 and resp.json()["detail"]["reason"] == "rate_limit"
+
+
+def test_sandbox_customer_is_replaced_after_switching_to_live_keys(client, monkeypatch):
+    # user-1 has a sandbox customer (cus_1) and an "active" sandbox plan; live mode has never heard of either.
+    cache.set_subscription("user-1", "plus", "active", "sub_test", None)
+    fake = FakeStripe(missing={"cus_1"})
+    monkeypatch.setattr(billing, "_client", lambda: fake)
+    assert client.post("/api/billing/portal", headers=bearer()).json()["detail"]["reason"] == "no_billing"
+    cache.set_stripe_customer("user-1", "cus_1")
+    cache.set_subscription("user-1", "plus", "active", "sub_test", None)
+    resp = client.post("/api/billing/checkout", json={"plan": "pro"}, headers=bearer())
+    assert resp.status_code == 200  # not blocked by the stale sandbox plan
+    assert fake.calls[-1][1]["customer"] == "cus_new"
+    assert cache.stripe_customer("user-1") == "cus_new" and me(client)["plan"] is None

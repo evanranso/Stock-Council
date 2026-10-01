@@ -436,6 +436,16 @@ def set_stripe_customer(user_id: str, customer_id: str) -> None:
         conn.execute("UPDATE accounts SET stripe_customer_id = ? WHERE user_id = ?", (customer_id, user_id))
 
 
+def clear_billing(user_id: str) -> None:
+    """Forget a Stripe customer and plan that no longer exist (e.g. sandbox ones after switching to live keys)."""
+    with _db() as conn:
+        conn.execute(
+            "UPDATE accounts SET stripe_customer_id = NULL, plan = NULL, plan_status = NULL, subscription_id = NULL, "
+            "plan_renews = NULL WHERE user_id = ?",
+            (user_id,),
+        )
+
+
 def user_for_customer(customer_id: str) -> str | None:
     with _db() as conn:
         row = conn.one("SELECT user_id FROM accounts WHERE stripe_customer_id = ?", (customer_id,))

@@ -110,8 +110,29 @@ def public_plans() -> dict[str, Any]:
 # --- Checkout and portal ---------------------------------------------------------------
 
 
-def _customer_for(user_id: str, email: str | None) -> str:
+def _existing_customer(user_id: str) -> str | None:
+    """The account's Stripe customer, if Stripe still knows it.
+
+    Customers made with test keys don't exist in live mode (and vice versa), and a customer can be
+    deleted in the dashboard. Then the stored ID and its plan are stale: forget them and start fresh.
+    """
     existing = cache.stripe_customer(user_id)
+    if not existing:
+        return None
+    try:
+        customer = _client().v1.customers.retrieve(existing)
+        if not getattr(customer, "deleted", False):
+            return existing
+    except stripe.InvalidRequestError as exc:
+        if getattr(exc, "code", None) != "resource_missing":
+            raise
+    log.info("Billing: stored customer %s no longer exists; starting fresh for %s", existing, user_id)
+    cache.clear_billing(user_id)
+    return None
+
+
+def _customer_for(user_id: str, email: str | None) -> str:
+    existing = _existing_customer(user_id)
     if existing:
         return existing
     params: dict[str, Any] = {"metadata": {"user_id": user_id}}
@@ -127,6 +148,7 @@ def checkout(user_id: str, email: str | None, plan_id: str) -> str:
     plan = _plan(plan_id)
     if not enabled() or not plan:
         raise BillingError(400, "unknown_plan", "That plan isn't available.")
+    customer = _customer_for(user_id, email)  # first: clears a stale plan if the customer is gone
     account = cache.get_account(user_id) or {}
     if (
         plan.kind == "subscription"
@@ -139,7 +161,7 @@ def checkout(user_id: str, email: str | None, plan_id: str) -> str:
     meta = {"user_id": user_id, "plan": plan.id}
     params: dict[str, Any] = {
         "mode": plan.kind,
-        "customer": _customer_for(user_id, email),
+        "customer": customer,
         "line_items": [{"price": plan.price_id, "quantity": 1}],
         "client_reference_id": user_id,
         "metadata": meta,
@@ -157,9 +179,9 @@ def checkout(user_id: str, email: str | None, plan_id: str) -> str:
 
 def portal(user_id: str) -> str:
     """Stripe's billing portal: change or cancel a plan, update the card, download invoices."""
-    customer = cache.stripe_customer(user_id)
+    customer = _existing_customer(user_id)
     if not customer:
-        raise BillingError(400, "no_billing", "No billing account yet.")
+        raise BillingError(400, "no_billing", "No billing account yet. Buy a plan or credits first.")
     session = _client().v1.billing_portal.sessions.create(
         params={"customer": customer, "return_url": f"{get_settings().site_url}/pricing"}
     )
