@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ANALYST_BY_ID, ANALYSTS, isComingSoon } from "@/lib/analysts";
 import { ComingSoon } from "./AnalystCard";
-import { type AnalystProgress, type CouncilState, type FeedItem, progress } from "@/lib/council";
-import { formatValue } from "@/lib/format";
+import { type CouncilState, progress } from "@/lib/council";
 import { DEPTH_ICON } from "@/lib/depth";
 import LeanBadge from "./LeanBadge";
 
@@ -38,13 +37,10 @@ export default function ProgressView({ state }: { state: CouncilState }) {
   const pending = ANALYSTS.filter((a) => !state.analysts[a.id]);
   const done = ANALYSTS.length - pending.length;
   const stageIdx = ORDER.indexOf(state.stage);
-  const latest = state.feed[state.feed.length - 1];
   const activity =
     state.stage === "connecting"
       ? "Connecting to the council (the server may take ~30s to wake up)…"
-      : state.stage === "analysts" && latest
-        ? feedText(latest)
-        : state.stage === "analysts" && pending.length
+      : state.stage === "analysts" && pending.length
         ? `${pending[tick % pending.length].name} is ${pending[tick % pending.length].task}…`
         : state.stage === "debate"
           ? "The bull and bear advocates are weighing all 12 reports…"
@@ -108,8 +104,6 @@ export default function ProgressView({ state }: { state: CouncilState }) {
         })}
       </ol>
 
-      {state.stage === "analysts" && state.feed.length > 0 && <Feed items={state.feed} />}
-
       <div className="mt-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {ANALYSTS.map((a) => (
           <AnalystLive key={a.id} id={a.id} state={state} />
@@ -124,98 +118,74 @@ export default function ProgressView({ state }: { state: CouncilState }) {
   );
 }
 
-/** "SEC Filings Analyst found 179 filings in the last 12 months (SEC EDGAR)" */
-function feedText(item: FeedItem): string {
-  const a = ANALYST_BY_ID[item.analystId];
-  if (!a) return "";
-  if (item.step === "reading") return `${a.name} is weighing what it found${item.found[0] ? `: ${item.found[0]}` : ""}…`;
-  if (item.status === "unavailable") return `${a.name} found no usable data`;
-  if (item.found.length) return `${a.name} pulled ${item.found[0]}${item.sources[0] ? ` from ${item.sources[0]}` : ""}`;
-  return `${a.name} pulled its data${item.sources[0] ? ` from ${item.sources.join(", ")}` : ""}`;
+/** Holds each value on screen for at least `ms`, so quick successive updates don't flicker. */
+function useSteady<T>(value: T, ms = 2200): T {
+  const [shown, setShown] = useState(value);
+  const since = useRef(0);
+  useEffect(() => {
+    if (Object.is(value, shown)) return;
+    const wait = Math.max(0, since.current + ms - Date.now());
+    const t = setTimeout(() => {
+      since.current = Date.now();
+      setShown(value);
+    }, wait);
+    return () => clearTimeout(t);
+  }, [value, shown, ms]);
+  return shown;
 }
 
-/** The newest findings across all analysts, newest first. */
-function Feed({ items }: { items: FeedItem[] }) {
-  const recent = items.filter((i) => i.step === "fetched").slice(-4).reverse();
-  if (!recent.length) return null;
-  return (
-    <ul className="mt-4 space-y-1.5 rounded-xl border border-white/10 bg-black/20 p-3 text-xs" aria-label="Live research feed">
-      {recent.map((item, n) => {
-        const a = ANALYST_BY_ID[item.analystId];
-        return (
-          <li key={item.id} className={`fade-up flex items-start gap-2 ${n === 0 ? "text-zinc-200" : "text-zinc-500"}`}>
-            <span aria-hidden>{a?.icon}</span>
-            <span className="min-w-0">
-              <span className="font-medium">{a?.name}</span>{" "}
-              {item.status === "unavailable" ? "found no usable data" : item.found.length ? `pulled ${item.found.join(" · ")}` : "pulled its data"}
-              {item.status !== "unavailable" && item.sources.length > 0 && <span className="text-zinc-500"> — {item.sources.join(", ")}</span>}
-            </span>
-          </li>
-        );
-      })}
-    </ul>
-  );
+/** "SEC filings" stays "SEC filings"; "Price charts" becomes "price charts". */
+function lower(text: string): string {
+  return text
+    .split(" ")
+    .map((w) => (w.length > 1 && w === w.toUpperCase() ? w : w.toLowerCase()))
+    .join(" ");
 }
 
-/** One analyst while the council runs: what it's pulling, what it found, then its view. */
+/** One sentence about what the analyst is looking at right now. */
+function sentence(id: string, state: CouncilState): string {
+  const a = ANALYST_BY_ID[id];
+  const live = state.progress[id];
+  const entry = state.analysts[id];
+  const what = live?.found?.[0];
+  if (isComingSoon(id)) return `${a.reads} coverage is coming soon.`;
+  if (entry && !entry.report.opinion) return "No usable data for this stock.";
+  if (entry) return what ? `Read ${what}.` : `Finished reading ${lower(a.reads)}.`;
+  if (live?.status === "unavailable") return "No usable data for this stock.";
+  if (live?.step === "reading" || live?.step === "fetched") return what ? `Reading ${what}…` : `Reading ${lower(a.reads)}…`;
+  return `${a.pulling ?? "Gathering data"}…`;
+}
+
+/** One analyst while the council runs: a fixed-size card with one line about what it's doing. */
 function AnalystLive({ id, state }: { id: string; state: CouncilState }) {
   const a = ANALYST_BY_ID[id];
-  const entry = state.analysts[id];
-  const live: AnalystProgress | undefined = state.progress[id];
-  const op = entry?.report.opinion;
-  const found = live?.found ?? [];
-  const sources = entry?.sources ?? live?.sources ?? [];
-  const metrics = live?.metrics ?? entry?.highlights?.metrics.slice(0, 2) ?? [];
-  const noData = (live?.status === "unavailable" || (entry && !op)) && !isComingSoon(id);
-
-  let status: React.ReactNode;
-  if (op) status = <LeanBadge lean={op.stance} label={`${op.stance} ${op.conviction}`} />;
-  else if (isComingSoon(id)) status = <ComingSoon />;
-  else if (noData) status = <span className="text-zinc-500">no data available</span>;
-  else if (live?.step === "reading") status = <Working text="Weighing the evidence" />;
-  else if (live?.step === "fetched") status = <Working text="Queued to analyze" />;
-  else status = <Working text={a.pulling ?? "Gathering data"} />;
+  const op = state.analysts[id]?.report.opinion;
+  const line = useSteady(sentence(id, state));
+  const finished = useSteady(!!state.analysts[id]);
+  const soon = isComingSoon(id);
 
   return (
-    <div className={`rounded-xl border p-3 transition ${op ? "fade-up border-white/10 bg-white/[0.03]" : live?.step === "reading" ? "border-brand-400/30 bg-brand-500/[0.04]" : "border-white/5"}`}>
+    <div className={`flex h-[74px] flex-col justify-center rounded-xl border px-3 transition-colors duration-700 ${finished && op ? "border-white/10 bg-white/[0.03]" : "border-white/5"}`}>
       <div className="flex items-center gap-2">
-        <span className={`text-lg ${op || noData || isComingSoon(id) ? "" : "animate-pulse"}`} aria-hidden>
+        <span className={`text-lg ${finished || soon ? "" : "animate-pulse opacity-70"}`} aria-hidden>
           {a.icon}
         </span>
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-200">{a.name}</span>
+        <span className="shrink-0 text-[11px]">
+          {soon ? (
+            <ComingSoon />
+          ) : finished && op ? (
+            <LeanBadge lean={op.stance} label={`${op.stance} ${op.conviction}`} />
+          ) : finished ? (
+            <span className="text-zinc-500">no data</span>
+          ) : (
+            <span className="block h-3 w-3 animate-spin rounded-full border-2 border-brand-300/30 border-t-brand-300" aria-label="working" />
+          )}
+        </span>
       </div>
-      <div className="mt-1.5 text-xs">{status}</div>
-      {found.length > 0 && (
-        <ul className="mt-2 space-y-0.5 text-[11px] text-zinc-400">
-          {found.map((f) => (
-            <li key={f} className="flex gap-1.5">
-              <span className="text-emerald-400" aria-hidden>
-                ✓
-              </span>
-              {f}
-            </li>
-          ))}
-        </ul>
-      )}
-      {metrics.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {metrics.map((m) => (
-            <span key={m.label} className="rounded-md bg-white/5 px-1.5 py-0.5 text-[11px] text-zinc-300">
-              {m.label} <span className="font-semibold tabular-nums text-zinc-100">{formatValue(m.value, m.format)}</span>
-            </span>
-          ))}
-        </div>
-      )}
-      {sources.length > 0 && <div className="mt-2 truncate text-[10px] text-zinc-500">Source: {sources.join(", ")}</div>}
+      <p key={line} className="fade-up mt-1 truncate pl-7 text-xs text-zinc-400" title={line}>
+        {line}
+      </p>
     </div>
-  );
-}
-
-function Working({ text }: { text: string }) {
-  return (
-    <span className="flex items-center gap-1.5 text-zinc-400">
-      <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-brand-300/30 border-t-brand-300" />
-      {text}…
-    </span>
   );
 }
