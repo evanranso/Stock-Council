@@ -53,7 +53,7 @@ class Settings:
     # Credits every new verified account gets once. 4 = two Standard analyses.
     free_credits: int = int(os.getenv("FREE_CREDITS", "4"))
     # Safety valve: at most this many accounts get free credits per 24h (0 = no cap).
-    free_signups_per_day: int = int(os.getenv("FREE_SIGNUPS_PER_DAY", "50"))
+    free_signups_per_day: int = int(os.getenv("FREE_SIGNUPS_PER_DAY", "20"))
     admin_emails: frozenset[str] = frozenset(e.lower() for e in _list(os.getenv("ADMIN_EMAILS", "")))
     default_invite_credits: int = int(os.getenv("DEFAULT_INVITE_CREDITS", "6"))
     # Unlocks /api/admin/* (cost stats, invite codes). Leave unset to disable admin endpoints.
@@ -66,9 +66,9 @@ class Settings:
     stripe_price_pro: str | None = os.getenv("STRIPE_PRICE_PRO") or None
     stripe_price_topup: str | None = os.getenv("STRIPE_PRICE_TOPUP") or None
     # Credits each purchase adds (subscriptions: every month, on each paid invoice).
-    plus_credits: int = int(os.getenv("PLUS_CREDITS", "20"))
-    pro_credits: int = int(os.getenv("PRO_CREDITS", "60"))
-    topup_credits: int = int(os.getenv("TOPUP_CREDITS", "10"))
+    plus_credits: int = int(os.getenv("PLUS_CREDITS", "10"))
+    pro_credits: int = int(os.getenv("PRO_CREDITS", "30"))
+    topup_credits: int = int(os.getenv("TOPUP_CREDITS", "5"))
     # Public site address, for Stripe's return links. Defaults to the first ALLOWED_ORIGINS entry.
     site_url: str = (os.getenv("SITE_URL") or _list(os.getenv("ALLOWED_ORIGINS", "http://localhost:3000"))[0]).rstrip(
         "/"

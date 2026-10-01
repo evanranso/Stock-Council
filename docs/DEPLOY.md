@@ -110,7 +110,7 @@ analyzed stock stays free for everyone, signed in or not.
 - `SUPABASE_URL` = `https://<project-ref>.supabase.co`
 - `ADMIN_EMAILS` = your email, so **Admin** appears in your account menu.
 - Remove `ACCESS_MODE` (it defaults to `accounts` once `SUPABASE_URL` is set), or set it to `accounts`.
-- Optional: `FREE_CREDITS` (4), `FREE_SIGNUPS_PER_DAY` (50).
+- Optional: `FREE_CREDITS` (4), `FREE_SIGNUPS_PER_DAY` (20).
 
 With `DATABASE_URL` set, everything (accounts, credits, history, costs, cache) lives in Supabase, so
 the Render server no longer needs a persistent disk.
@@ -134,9 +134,9 @@ cancellation, card updates and invoices happen in Stripe's customer portal. Unus
 Set it up in **Test mode** first (toggle at the top of the Stripe dashboard):
 
 1. **Product catalog → Add product**, three times:
-   - "Stock Council Plus": recurring, monthly (e.g. $9.99)
-   - "Stock Council Pro": recurring, monthly (e.g. $24.99)
-   - "Stock Council Credit pack": one-off (e.g. $6.00)
+   - "Stock Council Plus": recurring, monthly, $9.99 (10 credits)
+   - "Stock Council Pro": recurring, monthly, $24.99 (30 credits)
+   - "Stock Council Credit pack": one-off, $5.99 (5 credits)
 
    Open each product and copy its **price ID** (`price_...`).
 2. **Developers → API keys:** copy the **Secret key** (`sk_test_...`).
@@ -149,8 +149,8 @@ Set it up in **Test mode** first (toggle at the top of the Stripe dashboard):
    methods, and switching between the Plus and Pro prices.
 5. **Render → Environment:** `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PLUS`,
    `STRIPE_PRICE_PRO`, `STRIPE_PRICE_TOPUP`, and `SITE_URL` (your site, e.g.
-   `https://stock-council.evanranaso.workers.dev`). Optional: `PLUS_CREDITS` (20), `PRO_CREDITS` (60),
-   `TOPUP_CREDITS` (10).
+   `https://stock-council.evanranaso.workers.dev`). Optional: `PLUS_CREDITS` (10), `PRO_CREDITS` (30),
+   `TOPUP_CREDITS` (5).
 6. Test on `/pricing` with card `4242 4242 4242 4242`, any future date, any CVC.
 
 **Going live:** switch Stripe to Live mode and repeat steps 1–4 there (live products, live secret
@@ -158,6 +158,10 @@ key, a live webhook with its own signing secret), then replace the five values i
 
 The admin page shows revenue and profit (revenue minus Claude costs) for 24h / 7d / all time, and
 recent payments. To price for profit, compare "Avg cost / run" per depth with what a credit sells for.
+
+**Measured costs (Oct 2026):** Quick $0.46, Standard $0.80, Deep $1.13 per fresh run (about 130k input
+tokens). Per credit at 1/2/3 credits: $0.46 / $0.40 / $0.38. The defaults above keep roughly 40–60%
+margin after Stripe fees even if every credit is spent, and more from cached (free) views costing nothing.
 
 ---
 
