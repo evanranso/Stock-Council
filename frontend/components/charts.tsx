@@ -5,6 +5,7 @@
 import { useId, useState } from "react";
 import { formatValue, signed } from "@/lib/format";
 import type { Series } from "@/lib/types";
+import { LEAN_THRESHOLD } from "@/lib/horizon";
 
 const W = 600;
 const H = 180;
@@ -170,7 +171,7 @@ export function ScoreGauge({ score, size = 160 }: { score: number; size?: number
   const point = (a: number) => [cx + r * Math.cos(a), cy - r * Math.sin(a)];
   const [ex, ey] = point(angle);
   const [mx, my] = point(Math.PI / 2);
-  const color = clamped >= 20 ? "#34d399" : clamped <= -20 ? "#fb7185" : "#fcd34d";
+  const color = clamped >= LEAN_THRESHOLD ? "#34d399" : clamped <= -LEAN_THRESHOLD ? "#fb7185" : "#fcd34d";
   const sweep = clamped >= 0 ? 1 : 0;
   return (
     <svg viewBox="0 0 180 100" width={size} role="img" aria-label={`Council score ${signed(score)} out of ±100`}>

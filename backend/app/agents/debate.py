@@ -87,8 +87,11 @@ Your job is to check the formula and explain the result:
   finding that should dominate (e.g. going-concern language in a filing), an
   objection the formula over- or under-penalized, or a contribution that
   misreads the reports. Otherwise use 0 and say "Formula stands."
-- The rating and leans are derived from the final numbers (|score| below
-  {LEAN_THRESHOLD} is neutral/Hold, {STRONG_THRESHOLD}+ is strong). Argue for the number, not a label.
+- Each horizon gets its own rating from its final number (|score| below
+  {LEAN_THRESHOLD} is neutral/Hold, {STRONG_THRESHOLD}+ is strong), and readers choose the horizon
+  they care about. Argue for the numbers, not labels.
+- In bottom_line, if the call differs by horizon, say so plainly (e.g. "Bullish over the next
+  few months; no edge in the coming weeks").
 - Explain each horizon in plain English, including its main drivers.
 - List dissenting analysts as "analyst_id: reason".
 - Write the summary for a smart non-professional investor. No hype.

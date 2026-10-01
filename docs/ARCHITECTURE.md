@@ -54,9 +54,12 @@ All tunables live at the top of `backend/app/scoring.py`.
    weight present compared with a full, clean council, and `agreement` = |net| / gross directional
    signal.
 6. **Judge.** The judge sees the formula scores and their breakdown. It may move each horizon by at
-   most ±15 points, with a written reason. It never picks the rating.
-7. **Rating.** Final horizon scores are blended (weeks 0.2, months 0.4, years 0.4). Bands:
-   ≥ 50 Strong Buy, ≥ 20 Buy, within ±20 Hold, ≤ −20 Sell, ≤ −50 Strong Sell.
+   most ±8 points (below the Hold/Buy line, so it can't create a call alone), with a written reason. It never picks the rating.
+7. **Rating.** Each horizon is rated on its own from its final score, and the reader picks the
+   timeframe that headlines the report (weeks, months or years). Bands: ≥ 30 Strong Buy, ≥ 10 Buy,
+   within ±10 Hold, ≤ −10 Sell, ≤ −30 Strong Sell. Calibrated on the first live runs, where horizon
+   scores ranged about −12..+23 (averaging twelve analysts after penalties keeps scores near zero).
+   A blended score (weeks 0.2, months 0.4, years 0.4) is still stored for older clients.
 8. **Calibration.** Every verdict is appended to the `verdicts` table with the price at run time.
    The weights and bands are starting guesses. Once enough history exists, fit them against realized
    forward returns per horizon. Scores measure strength of evidence, not probabilities.

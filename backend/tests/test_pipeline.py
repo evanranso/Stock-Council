@@ -2,6 +2,7 @@
 
 import pytest
 
+from app import scoring
 from app.agents import debate, pipeline, specialists
 from app.data import _yf
 from app.schemas import (
@@ -99,8 +100,10 @@ async def test_verdict_comes_from_the_formula_with_bounded_judge(fake_world):
     events = [e async for e in pipeline.run_council("FAKE")]
     verdict = next(e for e in events if e["type"] == "verdict")["verdict"]
     weeks = verdict["weeks"]
-    assert weeks["adjustment"] == 15  # clamped from 50
-    assert weeks["score"] == pytest.approx(weeks["formula_score"] + 15)
+    assert weeks["adjustment"] == 8  # clamped from 50
+    assert weeks["score"] == pytest.approx(weeks["formula_score"] + 8)
+    for h in ("weeks", "months", "years"):  # each horizon is rated on its own
+        assert verdict[h]["rating"] == scoring.rating_for(verdict[h]["score"])
     assert verdict["years"]["adjustment"] == -5
     # 11 analysts all bullish at 60 -> strongly positive formula, so a Buy-side rating.
     assert verdict["rating"] in ("buy", "strong_buy")

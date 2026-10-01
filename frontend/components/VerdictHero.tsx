@@ -1,16 +1,18 @@
+"use client";
+
 import Link from "next/link";
 import { ANALYST_BY_ID } from "@/lib/analysts";
 import { DEPTH_ICON, type DepthId } from "@/lib/depth";
 import { RATING_LABEL, RATING_STYLE, signed } from "@/lib/format";
-import { HORIZONS, type Verdict } from "@/lib/types";
+import { HORIZON_FOR, HORIZON_LONG, HORIZON_ORDER, HORIZON_TAB, ratingFor, useHorizon } from "@/lib/horizon";
+import { HORIZONS, type Rating, type Verdict } from "@/lib/types";
 import { Meter, ScoreGauge } from "./charts";
 import Disclosure from "./Disclosure";
-import LeanBadge from "./LeanBadge";
 import ScoreBar from "./ScoreBar";
 
-const HORIZON_LABEL = { weeks: "Next few weeks", months: "Next few months", years: "Next 1–3 years" } as const;
+const HORIZON_LABEL = HORIZON_LONG;
 
-function glow(rating: Verdict["rating"]): string {
+function glow(rating: Rating): string {
   if (rating.includes("buy")) return "from-emerald-500/20 via-emerald-500/5";
   if (rating.includes("sell")) return "from-rose-500/20 via-rose-500/5";
   return "from-amber-400/15 via-amber-400/5";
@@ -31,11 +33,15 @@ export default function VerdictHero({
   cached?: boolean;
   depth?: DepthId;
 }) {
+  const [horizon, setHorizon] = useHorizon();
+  const chosen = verdict[horizon];
+  // Ratings come from each horizon's score (recomputed here so older reports use the current bands).
+  const rating = ratingFor(chosen.score);
   const reasonsFor = verdict.reasons_for ?? verdict.key_catalysts.slice(0, 3);
   const reasonsAgainst = verdict.reasons_against ?? verdict.key_risks.slice(0, 3);
 
   return (
-    <section id="verdict" className={`card fade-up relative overflow-hidden bg-gradient-to-br ${glow(verdict.rating)} to-transparent p-6 sm:p-8`}>
+    <section id="verdict" className={`card fade-up relative overflow-hidden bg-gradient-to-br ${glow(rating)} to-transparent p-6 sm:p-8`}>
       <div className="flex flex-wrap items-start gap-6">
         <div className="min-w-0 flex-1">
           <p className="text-sm text-zinc-400">
@@ -52,21 +58,42 @@ export default function VerdictHero({
             {ticker}
             {companyName && <span className="ml-3 align-middle text-lg font-normal text-zinc-400">{companyName}</span>}
           </h1>
+          <div className="mt-4 flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Your timeframe">
+            <span className="mr-1 text-xs uppercase tracking-wider text-zinc-500">Your timeframe</span>
+            {HORIZON_ORDER.map((h) => (
+              <button
+                key={h}
+                role="radio"
+                aria-checked={h === horizon}
+                onClick={() => setHorizon(h)}
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                  h === horizon ? "bg-white text-zinc-900 shadow" : "bg-white/5 text-zinc-300 ring-1 ring-white/10 hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                {HORIZON_TAB[h]}
+              </button>
+            ))}
+          </div>
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <span className={`rounded-xl px-4 py-1.5 text-xl font-bold shadow-lg ${RATING_STYLE[verdict.rating]}`}>{RATING_LABEL[verdict.rating]}</span>
+            <span className={`rounded-xl px-4 py-1.5 text-xl font-bold shadow-lg ${RATING_STYLE[rating]}`}>{RATING_LABEL[rating]}</span>
+            <span className="text-sm text-zinc-400">{HORIZON_FOR[horizon]}</span>
             <div className="w-40">
               <div className="mb-1 flex justify-between text-xs text-zinc-400">
                 <span>Confidence</span>
-                <span className="font-semibold text-zinc-100">{verdict.confidence}/100</span>
+                <span className="font-semibold text-zinc-100">{chosen.confidence}/100</span>
               </div>
-              <Meter value={verdict.confidence} />
+              <Meter value={chosen.confidence} />
             </div>
           </div>
           <p className="mt-4 max-w-2xl text-lg leading-snug text-zinc-100">{verdict.bottom_line ?? verdict.summary}</p>
+          <p className="mt-2 max-w-2xl text-sm text-zinc-400">
+            <span className="font-medium text-zinc-200">{HORIZON_LONG[horizon]}: </span>
+            {chosen.rationale}
+          </p>
         </div>
         <div className="flex flex-col items-center">
-          <ScoreGauge score={verdict.score} />
-          <span className="text-xs text-zinc-500">Council score</span>
+          <ScoreGauge score={chosen.score} />
+          <span className="text-xs text-zinc-500">Score · {HORIZON_TAB[horizon].toLowerCase()}</span>
         </div>
       </div>
 
@@ -97,16 +124,25 @@ export default function VerdictHero({
 
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         {HORIZONS.map((h) => (
-          <div key={h} className="rounded-xl border border-white/10 bg-black/20 p-3">
-            <div className="flex items-center justify-between">
+          <button
+            key={h}
+            onClick={() => setHorizon(h)}
+            aria-pressed={h === horizon}
+            className={`rounded-xl border p-3 text-left transition ${
+              h === horizon ? "border-brand-400/60 bg-brand-500/[0.08]" : "border-white/10 bg-black/20 hover:border-white/25"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-medium text-zinc-400">{HORIZON_LABEL[h]}</span>
-              <LeanBadge lean={verdict[h].lean} label={signed(verdict[h].score)} />
+              <span className={`rounded-md px-2 py-0.5 text-xs font-bold ${RATING_STYLE[ratingFor(verdict[h].score)]}`}>
+                {RATING_LABEL[ratingFor(verdict[h].score)]} {signed(verdict[h].score)}
+              </span>
             </div>
             <div className="mt-2.5">
               <ScoreBar score={verdict[h].score} />
             </div>
             <p className="mt-2 line-clamp-2 text-xs text-zinc-400">{verdict[h].rationale}</p>
-          </div>
+          </button>
         ))}
       </div>
 

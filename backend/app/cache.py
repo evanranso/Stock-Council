@@ -68,6 +68,7 @@ def _db() -> Any:
             db.add_column(conn, "runs", "depth", "TEXT DEFAULT 'deep'")
             db.add_column(conn, "usage", "depth", "TEXT")
             db.add_column(conn, "usage", "user_id", "TEXT")
+            db.add_column(conn, "saved_runs", "scores", "TEXT")
             db.add_column(conn, "accounts", "stripe_customer_id", "TEXT")
             db.add_column(conn, "accounts", "plan", "TEXT")
             db.add_column(conn, "accounts", "plan_status", "TEXT")
@@ -139,6 +140,8 @@ def _summary(events: list[dict[str, Any]]) -> dict[str, Any]:
         "depth": start.get("depth") or done.get("depth") or "deep",
         "rating": verdict.get("rating"),
         "score": verdict.get("score"),
+        # Each horizon's own score, so lists can show the rating for the viewer's chosen timeframe.
+        "scores": {h: (verdict.get(h) or {}).get("score") for h in ("weeks", "months", "years")} if verdict else None,
         "confidence": verdict.get("confidence"),
         "bottom_line": verdict.get("bottom_line") or verdict.get("summary"),
         "finished_at": done.get("finished_at") or done.get("started_at"),
@@ -162,6 +165,7 @@ def recent_runs(limit: int = 12) -> list[dict[str, Any]]:
                 "name": s["name"],
                 "rating": s["rating"],
                 "score": s["score"],
+                "scores": s["scores"],
                 "analyzed_at": row["created"],
                 "depth": row["depth"] or "deep",
             }
@@ -513,7 +517,7 @@ def save_for_user(user_id: str, ticker: str, events: list[dict[str, Any]]) -> st
     with _db() as conn:
         conn.execute(
             "INSERT INTO saved_runs (id, user_id, run_key, ticker, name, depth, created, rating, score, confidence,"
-            " bottom_line, events) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " bottom_line, events, scores) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT (user_id, run_key) DO NOTHING",
             (
                 rid,
@@ -528,6 +532,7 @@ def save_for_user(user_id: str, ticker: str, events: list[dict[str, Any]]) -> st
                 s["confidence"],
                 s["bottom_line"],
                 json.dumps(events),
+                json.dumps(s["scores"]) if s["scores"] else None,
             ),
         )
         row = conn.one("SELECT id FROM saved_runs WHERE user_id = ? AND run_key = ?", (user_id, run_key))
@@ -536,11 +541,17 @@ def save_for_user(user_id: str, ticker: str, events: list[dict[str, Any]]) -> st
 
 def list_saved(user_id: str, limit: int = 100) -> list[dict[str, Any]]:
     with _db() as conn:
-        return conn.all(
-            "SELECT id, ticker, name, depth, created, rating, score, confidence, bottom_line FROM saved_runs "
+        rows = conn.all(
+            "SELECT id, ticker, name, depth, created, rating, score, confidence, bottom_line, scores, "
+            "CASE WHEN scores IS NULL THEN events END AS events FROM saved_runs "
             "WHERE user_id = ? ORDER BY created DESC LIMIT ?",
             (user_id, limit),
         )
+    for row in rows:
+        # Reports saved before per-horizon scores were stored: read them from the saved events.
+        raw, events = row.pop("scores"), row.pop("events")
+        row["scores"] = json.loads(raw) if raw else _summary(json.loads(events))["scores"] if events else None
+    return rows
 
 
 def get_saved(user_id: str, rid: str) -> dict[str, Any] | None:

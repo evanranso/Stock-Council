@@ -76,6 +76,7 @@ export type Scores = Record<Horizon, HorizonScore>;
 
 export interface HorizonVerdict {
   lean: Lean;
+  rating?: Rating;
   score: number;
   formula_score: number;
   adjustment: number;

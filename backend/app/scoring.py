@@ -58,13 +58,19 @@ MIN_PENALTY_FACTOR = 0.25  # stacked objections can't erase an analyst entirely
 # the score toward 0, so one confident analyst alone can't produce +90.
 NEUTRAL_PRIOR_WEIGHT = 1.0
 
-MAX_JUDGE_ADJUSTMENT = 15
+# Each horizon is rated on its own; the person picks the timeframe they care about.
+# Calibration (Oct 2026, first 8 live runs): horizon scores ranged -12..+23, because every
+# score is an average over many analysts after the neutral prior, challenger penalties and
+# echo-chamber collapsing. At the old +-20 only 1 of 24 horizon scores cleared the bar; at
+# +-10 the spread looked realistic (months: 4 Buy, 4 Hold). Revisit as verdict history grows.
+LEAN_THRESHOLD = 10  # |score| below this is neutral / Hold
+STRONG_THRESHOLD = 30
 
-# How the three horizons blend into the single headline rating.
+# The judge's nudge stays below the Hold/Buy line so it can't create a call on its own.
+MAX_JUDGE_ADJUSTMENT = 8
+
+# Legacy blended score across horizons (kept for older clients and the verdict history).
 HORIZON_BLEND: dict[Horizon, float] = {"weeks": 0.2, "months": 0.4, "years": 0.4}
-
-LEAN_THRESHOLD = 20  # |score| below this is neutral / Hold
-STRONG_THRESHOLD = 50
 
 DIRECTION: dict[Lean, int] = {"bullish": 1, "bearish": -1, "neutral": 0}
 
@@ -185,6 +191,7 @@ def assemble_verdict(scores: dict[Horizon, HorizonScore], ruling: JudgeRuling) -
         final = round(_clamp(s.score + adj, -100, 100), 1)
         horizons[h] = HorizonVerdict(
             lean=lean_for(final),
+            rating=rating_for(final),
             score=final,
             formula_score=s.score,
             adjustment=adj,

@@ -106,7 +106,7 @@ def test_disagreement_lowers_confidence():
 
 @pytest.mark.parametrize(
     ("score", "rating"),
-    [(60, "strong_buy"), (25, "buy"), (0, "hold"), (-19, "hold"), (-20, "sell"), (-75, "strong_sell")],
+    [(30, "strong_buy"), (12.6, "buy"), (10, "buy"), (9.9, "hold"), (0, "hold"), (-10, "sell"), (-30, "strong_sell")],
 )
 def test_rating_bands(score, rating):
     assert scoring.rating_for(score) == rating

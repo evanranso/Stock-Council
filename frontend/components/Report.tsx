@@ -148,10 +148,10 @@ export default function Report({ state }: { state: CouncilState }) {
         <SectionTitle
           id="scoring"
           title="How it was scored"
-          sub="Analyst convictions weighted by relevance and data quality, then cut by the challenger, then nudged (±15 max) by the judge."
+          sub="Analyst convictions weighted by relevance and data quality, then cut by the challenger, then nudged (±8 max) by the judge."
         />
         <ScoringSection verdict={verdict} baseline={state.baseline} />
-        <p className="mt-3 text-xs text-zinc-500">Scores run from −100 to +100; ±20 is the Buy/Sell line. They measure strength of evidence, not the probability of the stock rising.</p>
+        <p className="mt-3 text-xs text-zinc-500">Each timeframe is scored and rated on its own, from −100 to +100: +10 or more is a Buy, +30 a Strong Buy (and the same below zero for Sell). Scores measure the strength and agreement of the evidence, not the probability of the stock rising; because they average twelve independent analysts, they rarely go far from zero.</p>
       </section>
     </div>
   );

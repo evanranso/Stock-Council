@@ -40,6 +40,7 @@ export interface RecentRun {
   name: string | null;
   rating: Rating | null;
   score: number | null;
+  scores?: Partial<Record<"weeks" | "months" | "years", number | null>> | null;
   analyzed_at: number;
   depth?: DepthId;
 }

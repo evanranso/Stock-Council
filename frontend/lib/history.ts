@@ -13,6 +13,7 @@ export interface HistoryEntry {
   savedAt: string;
   rating?: Rating;
   score?: number;
+  scores?: Partial<Record<"weeks" | "months" | "years", number>>;
   confidence?: number;
   bottomLine?: string;
   depth?: "quick" | "standard" | "deep";
@@ -72,6 +73,7 @@ export function saveCompleted(ticker: string, events: StoredEvent[]): string | n
     savedAt: finished,
     rating: verdict.verdict.rating,
     score: verdict.verdict.score,
+    scores: { weeks: verdict.verdict.weeks?.score, months: verdict.verdict.months?.score, years: verdict.verdict.years?.score },
     confidence: verdict.verdict.confidence,
     bottomLine: verdict.verdict.bottom_line ?? verdict.verdict.summary,
     depth: start && start.type === "start" ? start.depth : undefined,

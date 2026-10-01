@@ -201,6 +201,7 @@ Rating = Literal["strong_buy", "buy", "hold", "sell", "strong_sell"]
 
 class HorizonVerdict(BaseModel):
     lean: Lean
+    rating: Rating = Field(default="hold", description="This horizon's own rating, from its final score.")
     score: float = Field(description="Final score: formula score + judge adjustment, -100..100.")
     formula_score: float
     adjustment: int

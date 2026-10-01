@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { RATING_LABEL, RATING_STYLE, signed, timeAgo } from "@/lib/format";
 import { authFetch, ME_EVENT, useAuth } from "@/lib/auth";
 import { DEPTH_ICON } from "@/lib/depth";
+import { atHorizon, HORIZON_TAB, useHorizon } from "@/lib/horizon";
 import { clearHistory, type HistoryEntry, listHistory, removeEntry } from "@/lib/history";
 import type { Rating } from "@/lib/types";
 
@@ -19,6 +20,7 @@ interface SavedRow {
   created: number;
   rating: Rating | null;
   score: number | null;
+  scores?: HistoryEntry["scores"] | null;
   confidence: number | null;
   bottom_line: string | null;
 }
@@ -32,6 +34,7 @@ function fromServer(r: SavedRow): Entry {
     savedAt: new Date(r.created * 1000).toISOString(),
     rating: r.rating ?? undefined,
     score: r.score ?? undefined,
+    scores: r.scores ?? undefined,
     confidence: r.confidence ?? undefined,
     bottomLine: r.bottom_line ?? undefined,
     depth: r.depth ?? undefined,
@@ -120,10 +123,7 @@ export default function RecentList({ limit, manage = false }: { limit?: number; 
                 {e.depth && <> · {DEPTH_ICON[e.depth]} {e.depth}</>}</p>
             </div>
             {e.status === "done" && e.rating ? (
-              <div className="text-right">
-                <span className={`rounded-lg px-2.5 py-1 text-xs font-bold ${RATING_STYLE[e.rating]}`}>{RATING_LABEL[e.rating]}</span>
-                {e.score !== undefined && <div className="mt-1 text-xs tabular-nums text-zinc-500">score {signed(e.score)}</div>}
-              </div>
+              <HorizonRating e={e} />
             ) : (
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand-300/30 border-t-brand-300" aria-label="In progress" />
             )}
@@ -143,6 +143,22 @@ export default function RecentList({ limit, manage = false }: { limit?: number; 
         <button onClick={clearAll} className="mt-6 text-xs text-zinc-500 hover:text-rose-300">
           Clear all history
         </button>
+      )}
+    </div>
+  );
+}
+
+function HorizonRating({ e }: { e: Entry }) {
+  const [horizon] = useHorizon();
+  const at = atHorizon(e.scores, horizon, e);
+  if (!at.rating) return null;
+  return (
+    <div className="text-right">
+      <span className={`rounded-lg px-2.5 py-1 text-xs font-bold ${RATING_STYLE[at.rating]}`}>{RATING_LABEL[at.rating]}</span>
+      {at.score !== null && (
+        <div className="mt-1 text-xs tabular-nums text-zinc-500">
+          {e.scores ? HORIZON_TAB[horizon].toLowerCase() : "score"} {signed(at.score)}
+        </div>
       )}
     </div>
   );
