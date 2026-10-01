@@ -165,9 +165,25 @@ def test_paid_run_charges_saves_history_and_is_then_free(client, monkeypatch):
     assert client.get("/api/me/history", headers=bearer(sub="someone-else")).json() == []
     assert client.get(f"/api/me/history/{history[0]['id']}", headers=bearer(sub="someone-else")).status_code == 404
 
-    # Now cached: anyone can open it for free, and "start" doesn't charge again.
-    assert events(client.get("/api/analyze/ACME?depth=quick"))[0]["cached"] is True
+    # Now cached: free for any signed-in account, and "start" doesn't charge again.
     assert client.post("/api/analyze/ACME/start?depth=quick", headers=bearer(sub="u9")).json()["state"] == "cached"
+    ticket = client.post("/api/stream-ticket", headers=bearer(sub="u9")).json()["ticket"]
+    assert events(client.get(f"/api/analyze/ACME?depth=quick&ticket={ticket}"))[0]["cached"] is True
+
+    # Signed out: no report, only a teaser (what the public community list shows anyway).
+    assert events(client.get("/api/analyze/ACME?depth=quick"))[0]["reason"] == "sign_in"
+    assert events(client.get("/api/analyze/ACME?depth=quick&ticket=made-up"))[0]["reason"] == "sign_in"
+    status = client.get("/api/status/ACME?depth=quick").json()
+    assert status["locked"] is True and status["teaser"]["name"] == "Acme" and "events" not in status
+    assert "locked" not in client.get("/api/status/ACME?depth=quick", headers=bearer(sub="u9")).json()
+
+
+def test_stream_tickets_expire(client, monkeypatch):
+    assert client.post("/api/stream-ticket").status_code == 401  # signed-in only
+    ticket = client.post("/api/stream-ticket", headers=bearer()).json()["ticket"]
+    assert main._ticket_valid(ticket)
+    monkeypatch.setattr(main.time, "time", lambda: main._tickets[ticket][1] + 1)
+    assert not main._ticket_valid(ticket)
 
 
 def test_not_enough_credits(client, monkeypatch):

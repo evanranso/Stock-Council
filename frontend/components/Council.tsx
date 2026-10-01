@@ -11,6 +11,7 @@ import type { StoredEvent } from "@/lib/types";
 import { InviteForm } from "./AccessWidgets";
 import DepthPicker from "./DepthPicker";
 import FreeToView from "./FreeToView";
+import LockedReport, { type Teaser } from "./LockedReport";
 import ProgressView from "./ProgressView";
 import Report from "./Report";
 
@@ -20,6 +21,7 @@ type Phase =
   | { kind: "gate"; reason: string }
   | { kind: "starting" }
   | { kind: "unreachable" }
+  | { kind: "locked"; teaser?: Teaser }
   | { kind: "stream" };
 
 // Live analysis: checks whether this is free or costs credits, lets the visitor pick a depth,
@@ -44,6 +46,7 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
     fetchStatus(ticker, wanted).then((s: TickerStatus | null) => {
       if (cancelled) return;
       if (!s) return setPhase({ kind: "unreachable" });
+      if (s.free && s.locked) return setPhase({ kind: "locked", teaser: s.teaser });
       if (s.free) return setPhase({ kind: "stream" });
       const depths = s.depths?.length ? s.depths : DEFAULT_DEPTHS;
       const cheapest = Math.min(...depths.map((d) => d.credits));
@@ -71,9 +74,28 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
     if (phase.kind !== "stream") return;
     saved.current = false;
     setEvents([]);
-    const source = new EventSource(analyzeUrl(ticker, depth));
     const received: StoredEvent[] = [];
     let finished = false;
+    let source: EventSource | null = null;
+    let closed = false;
+
+    // EventSource can't send the sign-in header, so signed-in pages get a short-lived pass for the URL.
+    const open = async () => {
+      let url = analyzeUrl(ticker, depth);
+      if (signedIn) {
+        try {
+          const res = await authFetch("/api/stream-ticket", { method: "POST" });
+          if (res.ok) url += `&ticket=${encodeURIComponent((await res.json()).ticket)}`;
+        } catch {
+          /* fall through: the server will answer "sign in" */
+        }
+      }
+      if (closed) return;
+      source = new EventSource(url);
+      attach(source);
+    };
+
+    const attach = (source: EventSource) => {
 
     source.onmessage = (msg) => {
       const event = JSON.parse(msg.data) as StoredEvent;
@@ -116,7 +138,12 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
         setEvents([...received]);
       }
     };
-    return () => source.close();
+    };
+    open();
+    return () => {
+      closed = true;
+      source?.close();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticker, phase.kind, depth]);
 
@@ -141,6 +168,7 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
   }
 
   if (phase.kind === "checking" || phase.kind === "starting") return <Waiting />;
+  if (phase.kind === "locked") return <LockedReport ticker={ticker} teaser={phase.teaser} next={`/analyze?t=${ticker}`} />;
   if (phase.kind === "unreachable")
     return (
       <div className="card mx-auto max-w-xl space-y-3 p-6 text-center">

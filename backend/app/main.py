@@ -7,6 +7,7 @@ import hmac
 import json
 import logging
 import re
+import secrets
 import time
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator
@@ -50,6 +51,26 @@ app.add_middleware(
 TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 _recent_runs: dict[str, deque[float]] = defaultdict(deque)
 _daily_runs: dict[str, int] = {}
+
+# Short-lived passes for the live/cached analysis stream. Browsers' EventSource can't send an
+# Authorization header, so a signed-in page first trades its token for a pass (POST /api/stream-ticket)
+# and puts that in the stream URL. Passes expire quickly and never reveal the sign-in token itself.
+TICKET_SECONDS = 120
+_tickets: dict[str, tuple[str, float]] = {}
+
+
+def _issue_ticket(user_id: str) -> str:
+    now = time.time()
+    for key in [k for k, (_, exp) in _tickets.items() if exp < now]:
+        _tickets.pop(key, None)
+    ticket = secrets.token_urlsafe(24)
+    _tickets[ticket] = (user_id, now + TICKET_SECONDS)
+    return ticket
+
+
+def _ticket_valid(ticket: str | None) -> bool:
+    found = _tickets.get(ticket or "")
+    return bool(found and found[1] >= time.time())
 
 
 class AccessDenied(Exception):
@@ -193,10 +214,32 @@ def status(
     """Would opening this ticker at this depth be free (running, or recently analyzed at least this deep)?"""
     symbol = _ticker(ticker)
     profile = get_depth(depth)
+    locked = settings.access_mode == "accounts" and user is None  # account holders only
     if symbol in _live:
-        return {"free": True, "reason": "running", "depth": _live[symbol].depth}
-    if cache.get_run(symbol, profile.id) is not None:
-        return {"free": True, "reason": "cached"}
+        live = _live[symbol]
+        out: dict[str, Any] = {"free": True, "reason": "running", "depth": live.depth}
+        if locked:
+            start = next((e for e in live.events if e.get("type") == "start"), {})
+            out.update(locked=True, teaser={"name": start.get("company_name"), "depth": live.depth, "running": True})
+        return out
+    cached = cache.get_run(symbol, profile.id)
+    if cached is not None:
+        out = {"free": True, "reason": "cached"}
+        if locked:
+            s = cache._summary(cached)
+            out.update(
+                locked=True,
+                teaser={
+                    "name": s["name"],
+                    "depth": s["depth"],
+                    "scores": s["scores"],
+                    "rating": s["rating"],
+                    "score": s["score"],
+                    "bottom_line": s["bottom_line"],
+                    "finished_at": s["finished_at"],
+                },
+            )
+        return out
     invite = cache.get_invite(code)
     account = _account_for(user) if user else None
     return {
@@ -378,7 +421,12 @@ _live: dict[str, LiveRun] = {}
 
 @app.get("/api/analyze/{ticker}")
 async def analyze(
-    ticker: str, request: Request, refresh: bool = False, code: str | None = None, depth: str | None = None
+    ticker: str,
+    request: Request,
+    refresh: bool = False,
+    code: str | None = None,
+    depth: str | None = None,
+    ticket: str | None = None,
 ) -> StreamingResponse:
     symbol = _ticker(ticker)
     profile = get_depth(depth)
@@ -387,7 +435,10 @@ async def analyze(
     cached = None if (refresh or live) else await asyncio.to_thread(cache.get_run, symbol, profile.id)
     live = live or _live.get(symbol)  # a run may have started while we looked
     refusal: AccessDenied | None = None
-    if live is None and cached is None and settings.access_mode == "accounts":
+    if settings.access_mode == "accounts" and not _ticket_valid(ticket):
+        # With accounts, reports (running or recent) are for signed-in users, who stream with a pass.
+        refusal = AccessDenied("sign_in", "Sign in to see this analysis.")
+    elif live is None and cached is None and settings.access_mode == "accounts":
         # With accounts, fresh runs start only through POST /api/analyze/{ticker}/start (signed in).
         refusal = AccessDenied("sign_in", "Sign in to run a fresh analysis.")
     elif live is None and cached is None:
@@ -426,6 +477,12 @@ async def analyze(
     return StreamingResponse(
         stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
+
+
+@app.post("/api/stream-ticket")
+def stream_ticket(user: User = Depends(require_user)) -> dict[str, Any]:
+    """A short-lived pass for the analysis stream (EventSource can't send the sign-in header)."""
+    return {"ticket": _issue_ticket(user.id), "expires_in": TICKET_SECONDS}
 
 
 @app.post("/api/analyze/{ticker}/start")

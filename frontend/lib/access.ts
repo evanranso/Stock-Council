@@ -32,6 +32,8 @@ export interface TickerStatus {
   signed_in?: boolean;
   remaining?: number | null;
   unlimited?: boolean;
+  locked?: boolean;
+  teaser?: import("@/components/LockedReport").Teaser;
   depth?: DepthId;
   depths?: DepthOption[];
 }

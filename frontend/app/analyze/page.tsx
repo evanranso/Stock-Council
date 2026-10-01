@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import Council from "@/components/Council";
+import LockedReport from "@/components/LockedReport";
 import Report from "@/components/Report";
 import TickerSearch from "@/components/TickerSearch";
 import { TICKER_RE } from "@/lib/api";
@@ -103,26 +104,9 @@ function SavedReport({ id, ticker, source = "local" }: { id: string; ticker: str
   );
 }
 
-/** Community reports are for account holders: invite visitors to sign up, then bring them right back. */
+/** Community reports are for account holders: greyed out behind a sign-up prompt that brings them right back. */
 function CommunityGate({ ticker, id }: { ticker: string; id: string }) {
-  const next = encodeURIComponent(`/analyze?t=${ticker}&community=${id}`);
-  return (
-    <div className="card fade-up mx-auto max-w-xl p-6 text-center sm:p-8">
-      <p className="text-sm text-brand-300">{ticker} · community analysis</p>
-      <h1 className="mt-1 text-2xl font-bold">Create a free account to read this analysis</h1>
-      <p className="mt-2 text-zinc-400">
-        Every report in the community library is free to read with an account. New accounts also get free credits to run their own analyses.
-      </p>
-      <div className="mt-6 flex justify-center gap-3">
-        <Link href={`/login?mode=signup&next=${next}`} className="rounded-lg bg-gradient-to-r from-brand-500 to-accent-500 px-5 py-2.5 font-semibold text-white shadow-lg shadow-brand-500/25 hover:brightness-110">
-          Sign up free
-        </Link>
-        <Link href={`/login?next=${next}`} className="rounded-lg border border-white/10 px-5 py-2.5 text-zinc-300 hover:text-white">
-          Log in
-        </Link>
-      </div>
-    </div>
-  );
+  return <LockedReport ticker={ticker} next={`/analyze?t=${ticker}&community=${id}`} />;
 }
 
 export default function Page() {
