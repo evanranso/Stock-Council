@@ -1,5 +1,5 @@
 import Link from "next/link";
-import FreeToView from "@/components/FreeToView";
+import CommunityPicks from "@/components/CommunityPicks";
 import RecentList from "@/components/RecentList";
 import TickerSearch from "@/components/TickerSearch";
 import { ComingSoon } from "@/components/AnalystCard";
@@ -22,7 +22,7 @@ export default function Home() {
         <h1 className="text-4xl font-bold tracking-tight sm:text-6xl">
           Twelve analysts.
           <br />
-          <span className="brand-text">No echo chamber.</span>
+          <span className="brand-text">One clear verdict.</span>
         </h1>
         <p className="mx-auto max-w-2xl text-lg text-zinc-400">
           Independent AI analysts each study one slice of the data, argue it out, and deliver a verdict you can trace back to every number.
@@ -42,8 +42,7 @@ export default function Home() {
         <RecentList limit={6} />
       </section>
 
-      <FreeToView />
-
+      <CommunityPicks />
 
       <section>
         <h2 className="mb-4 text-lg font-semibold">How it works</h2>

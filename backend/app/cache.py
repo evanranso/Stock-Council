@@ -48,6 +48,12 @@ _SCHEMA = [
         events TEXT, UNIQUE (user_id, run_key)
     )""",
     "CREATE INDEX IF NOT EXISTS saved_runs_user ON saved_runs (user_id, created)",
+    # Every completed analysis, kept in full: the community library (newest first, filterable).
+    """CREATE TABLE IF NOT EXISTS analyses (
+        id TEXT PRIMARY KEY, run_key TEXT UNIQUE, ticker TEXT, name TEXT, depth TEXT, created DOUBLE PRECISION,
+        bottom_line TEXT, reference_price DOUBLE PRECISION, summary TEXT, events TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS analyses_created ON analyses (created)",
     # Every Stripe payment that added credits, keyed by the Stripe object (invoice or checkout session),
     # so a webhook delivered twice can never add credits twice.
     """CREATE TABLE IF NOT EXISTS payments (
@@ -69,6 +75,7 @@ def _db() -> Any:
             db.add_column(conn, "usage", "depth", "TEXT")
             db.add_column(conn, "usage", "user_id", "TEXT")
             db.add_column(conn, "saved_runs", "scores", "TEXT")
+            _seed_analyses(conn)
             db.add_column(conn, "accounts", "stripe_customer_id", "TEXT")
             db.add_column(conn, "accounts", "plan", "TEXT")
             db.add_column(conn, "accounts", "plan_status", "TEXT")
@@ -76,6 +83,17 @@ def _db() -> Any:
             db.add_column(conn, "accounts", "plan_renews", "DOUBLE PRECISION")
         _ready.add(key)
     return db.connect()
+
+
+def _seed_analyses(conn: Any) -> None:
+    """First time the library exists: fill it from the latest stored run of each stock."""
+    if conn.one("SELECT 1 AS x FROM analyses LIMIT 1"):
+        return
+    for row in conn.all("SELECT ticker, created, events FROM runs"):
+        try:
+            _insert_analysis(conn, row["ticker"], json.loads(row["events"]), None, row["created"])
+        except Exception:  # noqa: BLE001 - a malformed old run shouldn't block startup
+            continue
 
 
 def _max0(expr: str) -> str:
@@ -146,6 +164,71 @@ def _summary(events: list[dict[str, Any]]) -> dict[str, Any]:
         "bottom_line": verdict.get("bottom_line") or verdict.get("summary"),
         "finished_at": done.get("finished_at") or done.get("started_at"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Community library: every completed analysis, browsable and filterable
+# ---------------------------------------------------------------------------
+
+HORIZON_KEYS = ("weeks", "months", "years")
+
+
+def _insert_analysis(
+    conn: Any, ticker: str, events: list[dict[str, Any]], reference_price: float | None, created: float
+) -> None:
+    s = _summary(events)
+    verdict = next((e.get("verdict") for e in events if e.get("type") == "verdict"), None) or {}
+    if not verdict:
+        return
+    summary = {
+        "scores": {h: (verdict.get(h) or {}).get("score") for h in HORIZON_KEYS},
+        "confidences": {h: (verdict.get(h) or {}).get("confidence") for h in HORIZON_KEYS},
+        "rating": verdict.get("rating"),
+        "score": verdict.get("score"),
+        "confidence": verdict.get("confidence"),
+    }
+    conn.execute(
+        "INSERT INTO analyses (id, run_key, ticker, name, depth, created, bottom_line, reference_price, summary,"
+        " events) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (run_key) DO NOTHING",
+        (
+            secrets.token_urlsafe(9),
+            f"{ticker}:{s['finished_at'] or created}",
+            ticker,
+            s["name"],
+            s["depth"],
+            created,
+            s["bottom_line"],
+            reference_price,
+            json.dumps(summary),
+            json.dumps([{k: v for k, v in e.items() if k != "cached"} for e in events]),
+        ),
+    )
+
+
+def save_analysis(ticker: str, events: list[dict[str, Any]], reference_price: float | None = None) -> None:
+    with _db() as conn:
+        _insert_analysis(conn, ticker, events, reference_price, time.time())
+
+
+def list_analyses(since: float = 0, limit: int = 2000) -> list[dict[str, Any]]:
+    """Newest first, without the (large) events. Filtering and sorting happen in the caller."""
+    with _db() as conn:
+        rows = conn.all(
+            "SELECT id, ticker, name, depth, created, bottom_line, reference_price, summary FROM analyses "
+            "WHERE created >= ? ORDER BY created DESC LIMIT ?",
+            (since, limit),
+        )
+    for row in rows:
+        row["summary"] = json.loads(row["summary"] or "{}")
+    return rows
+
+
+def get_analysis(aid: str) -> dict[str, Any] | None:
+    with _db() as conn:
+        row = conn.one("SELECT id, ticker, name, depth, created, events FROM analyses WHERE id = ?", (aid,))
+    if not row:
+        return None
+    return {**row, "events": json.loads(row["events"])}
 
 
 def recent_runs(limit: int = 12) -> list[dict[str, Any]]:

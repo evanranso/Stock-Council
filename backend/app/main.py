@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import billing, cache, search, usage
+from . import billing, cache, scoring, search, usage
 from .agents.pipeline import run_council
 from .agents.specialists import SPECIALISTS
 from .auth import User, optional_user, require_user, verify_token
@@ -211,6 +211,68 @@ def status(
     }
 
 
+COMMUNITY_DAYS = {"1": 1, "7": 7, "30": 30, "90": 90, "all": None}
+
+
+@app.get("/api/community")
+def community(
+    days: str = "30",
+    rating: str = "all",
+    horizon: str = "months",
+    depth: str = "all",
+    sort: str = "newest",
+    q: str = "",
+    limit: int = 30,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Every completed analysis on the site, filterable: the community's picks."""
+    if horizon not in ("weeks", "months", "years"):
+        horizon = "months"
+    span = COMMUNITY_DAYS.get(days, 30)
+    rows = cache.list_analyses(time.time() - span * 86400 if span else 0)
+    needle = q.strip()
+    items = []
+    for r in rows:
+        s = r.pop("summary")
+        score = (s.get("scores") or {}).get(horizon)
+        if score is None:
+            score = s.get("score")  # older runs without per-horizon scores
+        if score is None:
+            continue
+        item = {
+            **r,
+            "score": score,
+            "rating": scoring.rating_for(score),
+            "confidence": (s.get("confidences") or {}).get(horizon) or s.get("confidence"),
+            "scores": s.get("scores"),
+        }
+        if depth != "all" and r["depth"] != depth:
+            continue
+        if rating in ("buy", "sell") and rating not in item["rating"]:
+            continue
+        if rating == "hold" and item["rating"] != "hold":
+            continue
+        if needle and needle.upper() not in r["ticker"] and needle.lower() not in (r["name"] or "").lower():
+            continue
+        items.append(item)
+    if sort == "bullish":
+        items.sort(key=lambda i: -i["score"])
+    elif sort == "bearish":
+        items.sort(key=lambda i: i["score"])
+    elif sort == "confidence":
+        items.sort(key=lambda i: -(i["confidence"] or 0))
+    limit = max(1, min(limit, 100))
+    return {"total": len(items), "items": items[offset : offset + limit], "horizon": horizon}
+
+
+@app.get("/api/community/{aid}")
+def community_analysis(aid: str) -> dict[str, Any]:
+    found = cache.get_analysis(aid)
+    if not found:
+        raise HTTPException(404, "Analysis not found.")
+    return found
+
+
 @app.get("/api/recent")
 def recent() -> list[dict[str, Any]]:
     """Stocks analyzed recently: free for anyone to open."""
@@ -275,6 +337,7 @@ class LiveRun:
             if completed:
                 cache.save_run(self.symbol, self.events, self.depth)
                 cache.record_verdict(self.events[-1]["run"])
+                cache.save_analysis(self.symbol, self.events, self.events[-1]["run"].get("reference_price"))
                 if self.user_id:
                     cache.save_for_user(self.user_id, self.symbol, self.events)
             elif self.invite_code:
