@@ -42,6 +42,7 @@ Rules:
   fairly read in your favor, explain why; don't pretend it isn't {other}ish.
 - Cover the horizons: {HORIZONS}.
 - Be candid in weakest_point. An advocate who hides their weak spot loses the room.
+- Be concise: arguments that would move an investor's decision, no filler.
 """
 
 
@@ -68,7 +69,8 @@ each analyst's per-horizon lean and conviction:
 - Report every echo chamber as a shared_evidence group; each group is
   collapsed so it counts as one analyst.
 Be precise and fair: penalize only what is actually weak, and say which leans
-survive scrutiny. Horizons in play: {HORIZONS}.
+survive scrutiny. Raise only objections that matter; skip nitpicks.
+Horizons in play: {HORIZONS}.
 """
 
 JUDGE_PROMPT = f"""\

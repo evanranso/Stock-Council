@@ -125,12 +125,20 @@ async def fetch(ticker: str) -> DataPacket:
 
     rows = [tx for batch in await asyncio.gather(*(load(f) for f in filings)) for tx in batch]
     rows.sort(key=lambda r: r.get("date") or "", reverse=True)
+    # Open-market trades are the signal; grants, withholding and exercises are routine, so they're counted, not listed.
+    routine: dict[str, int] = {}
+    for r in rows:
+        if r["code"] not in ("P", "S"):
+            label = CODES.get(r["code"] or "", r["code"] or "other")
+            routine[label] = routine.get(label, 0) + 1
     data = {
         "summary_90d": summarize(rows, 90),
         "summary_12m": summarize(rows, 365),
-        "transaction_code_legend": CODES,
         "form4_filings_read": len(filings),
-        "transactions": rows[:80],
+        "open_market_trades": [
+            {k: v for k, v in r.items() if v not in (None, False)} for r in rows if r["code"] in ("P", "S")
+        ][:30],
+        "routine_transactions_12m": routine,
     }
     return DataPacket(
         segment=SEGMENT,

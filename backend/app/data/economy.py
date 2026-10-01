@@ -17,7 +17,7 @@ from . import sec
 from .base import get_json, get_text, guarded, unavailable
 
 SEGMENT = "economy"
-POINTS = 14
+POINTS = 400  # enough history to look a year back, even for daily series
 
 SERIES = {
     "FEDFUNDS": "Effective fed funds rate (%)",
@@ -56,6 +56,43 @@ async def _series_csv(series_id: str) -> list[dict]:
     return parse_fred_csv(text)
 
 
+def _value_on_or_before(obs: list[dict], day: str) -> float | None:
+    """obs is newest first."""
+    return next((o["value"] for o in obs if o["date"] <= day), None)
+
+
+def summarize_series(series_id: str, label: str, obs: list[dict], today: datetime | None = None) -> dict:
+    """Latest reading plus where it was 3 and 12 months ago: the trend, without every data point.
+
+    Price indices (CPI) are only meaningful as inflation rates, so they're reported as year-over-year %.
+    """
+    latest = obs[0]
+    anchor = datetime.fromisoformat(latest["date"])
+    back = {
+        "3m_ago": (anchor - timedelta(days=91)).date().isoformat(),
+        "1y_ago": (anchor - timedelta(days=365)).date().isoformat(),
+    }
+    if series_id in ("CPIAUCSL", "CPILFESL"):
+        return {
+            "label": ("Core CPI" if series_id == "CPILFESL" else "CPI") + " inflation, year over year (%)",
+            "latest": {"date": latest["date"]},
+            "yoy_pct": _yoy(obs, latest["date"]),
+            "yoy_pct_3m_ago": _yoy(obs, back["3m_ago"]),
+        }
+    entry: dict = {"label": label, "latest": latest}
+    for name, day in back.items():
+        v = _value_on_or_before(obs, day)
+        if v is not None:
+            entry[name] = round(v, 3)
+    return entry
+
+
+def _yoy(obs: list[dict], day: str) -> float | None:
+    now = _value_on_or_before(obs, day)
+    then = _value_on_or_before(obs, (datetime.fromisoformat(day) - timedelta(days=365)).date().isoformat())
+    return round((now / then - 1) * 100, 2) if now and then else None
+
+
 @guarded(SEGMENT)
 async def fetch(ticker: str) -> DataPacket:
     key = get_settings().fred_api_key
@@ -66,10 +103,7 @@ async def fetch(ticker: str) -> DataPacket:
     for sid, res in zip(SERIES, results, strict=True):
         if isinstance(res, Exception) or not res:
             continue
-        entry = {"label": SERIES[sid], "latest": res[0], "history_newest_first": res}
-        if sid in ("CPIAUCSL", "CPILFESL") and len(res) >= 13:
-            entry["yoy_pct"] = round((res[0]["value"] / res[12]["value"] - 1) * 100, 2)
-        indicators[sid] = entry
+        indicators[sid] = summarize_series(sid, SERIES[sid], res)
     if not indicators:
         return unavailable(SEGMENT, ticker, "FRED was unreachable.")
 

@@ -37,8 +37,20 @@ def clean(value: Any) -> Any:
     if isinstance(value, float):
         if math.isnan(value) or math.isinf(value):
             return None
-        return round(value, 4)
+        return _sig(value)
     return value
+
+
+def _sig(value: float, digits: int = 5) -> float | int:
+    """Round to significant digits: 124300000000.0 -> 124300000000, 0.318237 -> 0.31824.
+
+    Keeps every figure accurate to 0.01% while cutting the digits (and tokens) the
+    analysts have to read. Whole numbers are written without a trailing ".0".
+    """
+    if value == 0:
+        return 0
+    rounded = round(value, digits - 1 - int(math.floor(math.log10(abs(value)))))
+    return int(rounded) if rounded == int(rounded) and abs(rounded) >= 1 else rounded
 
 
 def df_records(df: Any, limit: int | None = None) -> list[dict[str, Any]]:

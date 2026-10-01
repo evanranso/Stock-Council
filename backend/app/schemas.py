@@ -49,7 +49,7 @@ class HorizonView(BaseModel):
             "clearly says 'no edge', 0 means your data doesn't speak to this horizon at all."
         )
     )
-    rationale: str = Field(description="One or two sentences grounded in the data.")
+    rationale: str = Field(description="One sentence under 30 words, grounded in the data.")
 
 
 class Outlook(BaseModel):
@@ -59,8 +59,8 @@ class Outlook(BaseModel):
 
 
 class Finding(BaseModel):
-    point: str = Field(description="The observation, stated plainly.")
-    evidence: str = Field(description="The specific numbers/dates from the data that support it.")
+    point: str = Field(description="The observation in one plain sentence.")
+    evidence: str = Field(description="The specific numbers and dates that support it, under 35 words.")
     implication: Lean
 
 
@@ -69,10 +69,14 @@ class AnalystOpinion(BaseModel):
 
     stance: Lean
     conviction: int = Field(description="0-100. How strongly the data supports the stance.")
-    headline: str = Field(description="One-sentence takeaway.")
-    key_findings: list[Finding] = Field(description="3-6 findings, most important first.")
-    risks_to_view: list[str] = Field(description="What in this data argues against the stance.")
-    what_would_change_my_mind: str
+    headline: str = Field(description="One-sentence takeaway under 30 words.")
+    key_findings: list[Finding] = Field(
+        description="3-5 findings that matter for the investment call, most important first."
+    )
+    risks_to_view: list[str] = Field(
+        description="1-3 items, one sentence each: what in this data argues against the stance."
+    )
+    what_would_change_my_mind: str = Field(description="One sentence.")
     data_quality: Literal["good", "partial", "poor"]
     outlook: Outlook
 
@@ -91,18 +95,20 @@ class AnalystReport(BaseModel):
 
 
 class Argument(BaseModel):
-    claim: str
+    claim: str = Field(description="One sentence.")
     supporting_analysts: list[str] = Field(description="analyst_ids whose reports back this claim.")
-    evidence: str
+    evidence: str = Field(description="Under 40 words, citing the analysts' numbers.")
 
 
 class CaseReport(BaseModel):
     """Bull or bear advocate output."""
 
-    thesis: str
-    arguments: list[Argument] = Field(description="3-6 arguments, strongest first.")
-    catalysts: list[str] = Field(description="Events that would prove this case right.")
-    weakest_point: str = Field(description="The most honest admission of where this case is thin.")
+    thesis: str = Field(description="2-3 sentences.")
+    arguments: list[Argument] = Field(description="3-5 arguments, strongest first.")
+    catalysts: list[str] = Field(description="2-4 short items: events that would prove this case right.")
+    weakest_point: str = Field(
+        description="One or two sentences: the most honest admission of where this case is thin."
+    )
     key_points: list[str] = Field(
         description="The case at a glance: exactly 3 skimmable bullets, each under 15 words, strongest first."
     )
@@ -110,8 +116,8 @@ class CaseReport(BaseModel):
 
 class Objection(BaseModel):
     target: str = Field(description="'bull', 'bear', or an analyst_id.")
-    claim_challenged: str
-    objection: str
+    claim_challenged: str = Field(description="The claim, paraphrased in under 20 words.")
+    objection: str = Field(description="1-2 sentences.")
     severity: Literal["low", "medium", "high"]
     affected_analysts: list[str] = Field(
         description=(
@@ -127,12 +133,14 @@ class SharedEvidence(BaseModel):
 
 
 class ChallengeReport(BaseModel):
-    objections: list[Objection]
-    leans_that_hold_up: list[str] = Field(description="Claims that survived scrutiny.")
+    objections: list[Objection] = Field(
+        description="Only objections that would change the numbers or the call; at most 6."
+    )
+    leans_that_hold_up: list[str] = Field(description="2-4 short items: claims that survived scrutiny.")
     shared_evidence: list[SharedEvidence] = Field(
         description="Echo chambers: groups of analysts counting the same underlying fact. Empty if none."
     )
-    net_assessment: str
+    net_assessment: str = Field(description="2-3 sentences.")
     headline: str = Field(
         description="One sentence under 25 words: the most important objection and its effect on the call."
     )
@@ -170,8 +178,8 @@ class HorizonRuling(BaseModel):
     adjustment: int = Field(
         description="Points to add to the formula score (negative = more bearish). 0 if the formula got it right."
     )
-    adjustment_reason: str = Field(description="Why the adjustment; say 'Formula stands.' if 0.")
-    rationale: str = Field(description="Plain-English outlook for this horizon.")
+    adjustment_reason: str = Field(description="One sentence on why; say 'Formula stands.' if 0.")
+    rationale: str = Field(description="Plain-English outlook for this horizon in 2-3 sentences.")
 
 
 class JudgeRuling(BaseModel):
@@ -182,10 +190,10 @@ class JudgeRuling(BaseModel):
     weeks: HorizonRuling
     months: HorizonRuling
     years: HorizonRuling
-    key_catalysts: list[str]
-    key_risks: list[str]
+    key_catalysts: list[str] = Field(description="2-4 short items.")
+    key_risks: list[str] = Field(description="2-4 short items.")
     dissenting_analysts: list[str] = Field(description="analyst_id: short reason the verdict goes against them.")
-    what_would_change_the_verdict: str
+    what_would_change_the_verdict: str = Field(description="One or two sentences.")
 
 
 Rating = Literal["strong_buy", "buy", "hold", "sell", "strong_sell"]
@@ -213,10 +221,10 @@ class Verdict(BaseModel):
     weeks: HorizonVerdict
     months: HorizonVerdict
     years: HorizonVerdict
-    key_catalysts: list[str]
-    key_risks: list[str]
+    key_catalysts: list[str] = Field(description="2-4 short items.")
+    key_risks: list[str] = Field(description="2-4 short items.")
     dissenting_analysts: list[str]
-    what_would_change_the_verdict: str
+    what_would_change_the_verdict: str = Field(description="One or two sentences.")
 
 
 class CouncilRun(BaseModel):

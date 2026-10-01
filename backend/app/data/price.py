@@ -57,6 +57,11 @@ async def fetch(ticker: str) -> DataPacket:
             "avg_90d": float(volume.tail(90).mean()),
             "last": float(volume.iloc[-1]),
         },
+        # For the chart. Analysts read the monthly series below: the returns, averages and range
+        # already summarize the path, so 52 weekly points mostly repeat them.
         "weekly_closes_last_52": [{"week": clean(i), "close": round(float(v), 2)} for i, v in weekly.items()],
+        "monthly_closes_last_12": {
+            clean(i)[:7]: round(float(v), 2) for i, v in close.resample("ME").last().tail(12).items()
+        },
     }
     return DataPacket(segment=SEGMENT, ticker=ticker, sources=["Yahoo Finance (yfinance)"], data=clean(data))

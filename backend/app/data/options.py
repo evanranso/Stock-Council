@@ -77,7 +77,7 @@ def summarize(spot: float, chains: dict[str, dict[str, pd.DataFrame]]) -> dict[s
             {
                 "expiration": exp,
                 **ind.chain_summary(calls, puts, spot),
-                "unusual": ind.unusual_activity(calls, "call") + ind.unusual_activity(puts, "put"),
+                "unusual": ind.unusual_activity(calls, "call", 3) + ind.unusual_activity(puts, "put", 3),
             }
         )
     return out

@@ -9,10 +9,18 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from ..data.base import clean
 from ..schemas import AnalystOpinion, AnalystReport, DataPacket
 from .llm import structured
 
-MAX_PACKET_CHARS = 80_000
+MAX_PACKET_CHARS = 40_000
+
+# Packet fields kept for the website's charts but not worth an analyst's tokens
+# (the analyst gets a compact version of the same information instead).
+CHART_ONLY = {
+    "price": {"weekly_closes_last_52"},  # analysts read monthly_closes_last_12
+    "financials": {"xbrl_tags_used"},  # internal bookkeeping
+}
 
 COMMON_RULES = """\
 You are one member of a 12-analyst investment council. You have been given ONE
@@ -42,6 +50,10 @@ and years feed directly into the council's scoring formula, so calibrate them.
   conviction 0. That removes you from that horizon instead of diluting it.
 - A confident neutral (the data clearly shows no edge) is useful: give it a
   real conviction.
+
+Be concise. Your report is read by four more agents, so every sentence should
+carry a number or a judgment. Report what would move an investment decision;
+skip trivia, restating the data, and filler.
 """
 
 
@@ -192,14 +204,19 @@ whether the stock is being carried by (or fighting) its group.""",
 BY_ID = {s.id: s for s in SPECIALISTS}
 
 
+def analyst_view(packet: DataPacket) -> dict:
+    """What the analyst actually reads: the packet minus chart-only fields, numbers rounded."""
+    hidden = CHART_ONLY.get(packet.segment, set())
+    return clean({k: v for k, v in packet.data.items() if k not in hidden})
+
+
 def _render_packet(packet: DataPacket) -> str:
-    body = json.dumps(packet.data, default=str, separators=(",", ":"))
+    body = json.dumps(analyst_view(packet), default=str, separators=(",", ":"))
     if len(body) > MAX_PACKET_CHARS:
         body = body[:MAX_PACKET_CHARS] + "...[truncated]"
     return (
         f"Ticker: {packet.ticker}\n"
         f"Today's date: {packet.as_of.date().isoformat()} (judge how fresh each data point is against this)\n"
-        f"Data fetched: {packet.as_of.isoformat()}\n"
         f"Packet status: {packet.status}\n"
         f"Sources: {', '.join(packet.sources) or 'n/a'}\n"
         f"Notes: {'; '.join(packet.notes) or 'none'}\n\n"

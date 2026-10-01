@@ -17,7 +17,7 @@ def _yahoo(ticker: str) -> dict:
         "number_of_analysts": info.get("numberOfAnalystOpinions"),
         "consensus_key": info.get("recommendationKey"),
         "rating_mix_by_month": df_records(_yf.safe_attr(ticker, "recommendations_summary")),
-        "recent_rating_changes": df_records(_yf.safe_attr(ticker, "upgrades_downgrades"), limit=25),
+        "recent_rating_changes": df_records(_yf.safe_attr(ticker, "upgrades_downgrades"), limit=12),
     }
 
 
