@@ -179,7 +179,7 @@ function PricingPage() {
       )}
 
       <p className="text-center text-xs text-zinc-500">
-        Payments are processed securely by Stripe. Stock Council never sees your card details. AI-generated research, not investment advice.
+        Payments are processed securely by Stripe. Stock Council never sees your card details.
       </p>
     </div>
   );

@@ -215,3 +215,31 @@ def test_plans_and_admin_revenue(client):
 
 def test_billing_off_without_keys(accounts_client):  # noqa: F811
     assert accounts_client.get("/api/billing/plans").json() == {"enabled": False, "plans": []}
+
+
+def test_stripe_errors_come_back_readable(client, monkeypatch):
+    import stripe
+
+    class Broken(FakeStripe):
+        def _checkout(self, params):
+            raise stripe.InvalidRequestError("No such price: 'price_plus'", param="line_items")
+
+    monkeypatch.setattr(billing, "_client", lambda: Broken())
+    resp = client.post("/api/billing/checkout", json={"plan": "plus"}, headers=bearer())
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == {"reason": "stripe_error", "message": "Stripe: No such price: 'price_plus'"}
+
+    def crash(*a):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(billing, "checkout", crash)
+    resp = client.post("/api/billing/checkout", json={"plan": "plus"}, headers=bearer())
+    assert resp.status_code == 500 and resp.json()["detail"]["reason"] == "billing_error"
+
+
+def test_checkout_rate_limit_is_a_clean_429(client, monkeypatch):
+    monkeypatch.setattr(main, "settings", dataclasses.replace(main.settings, rate_limit_per_hour=1))
+    monkeypatch.setattr(billing, "_client", lambda: FakeStripe())
+    assert client.post("/api/billing/checkout", json={"plan": "topup"}, headers=bearer()).status_code == 200
+    resp = client.post("/api/billing/checkout", json={"plan": "topup"}, headers=bearer())
+    assert resp.status_code == 429 and resp.json()["detail"]["reason"] == "rate_limit"

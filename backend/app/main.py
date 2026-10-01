@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import logging
 import re
 import time
 from collections import defaultdict, deque
@@ -12,6 +13,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+import stripe
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -36,6 +38,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Stock Council API", lifespan=lifespan)
 settings = get_settings()
+log = logging.getLogger(__name__)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
@@ -495,22 +498,40 @@ def billing_plans() -> dict[str, Any]:
     return billing.public_plans()
 
 
+def _stripe_call(fn: Any, *args: Any) -> dict[str, str]:
+    """Run a Stripe call, turning every failure into a readable JSON error.
+
+    An unhandled exception becomes a bare 500 without CORS headers, which the browser
+    reports as "couldn't reach the server" and hides the real reason.
+    """
+    try:
+        return {"url": fn(*args)}
+    except billing.BillingError as exc:
+        raise _billing_error(exc) from exc
+    except stripe.StripeError as exc:
+        log.warning("Stripe error in %s: %s", fn.__name__, exc)
+        message = getattr(exc, "user_message", None) or str(exc) or type(exc).__name__
+        raise HTTPException(502, {"reason": "stripe_error", "message": f"Stripe: {message}"}) from exc
+    except Exception as exc:
+        log.exception("Billing failure in %s", fn.__name__)
+        raise HTTPException(
+            500, {"reason": "billing_error", "message": f"Payment setup failed ({type(exc).__name__}). Try again."}
+        ) from exc
+
+
 @app.post("/api/billing/checkout")
 def billing_checkout(body: CheckoutBody, user: User = Depends(require_user)) -> dict[str, str]:
     _account_for(user)
-    _check_rate_limit(f"checkout:{user.id}")
     try:
-        return {"url": billing.checkout(user.id, user.email, body.plan)}
-    except billing.BillingError as exc:
-        raise _billing_error(exc) from exc
+        _check_rate_limit(f"checkout:{user.id}")
+    except AccessDenied as exc:
+        raise HTTPException(429, {"reason": exc.reason, "message": exc.message}) from exc
+    return _stripe_call(billing.checkout, user.id, user.email, body.plan)
 
 
 @app.post("/api/billing/portal")
 def billing_portal(user: User = Depends(require_user)) -> dict[str, str]:
-    try:
-        return {"url": billing.portal(user.id)}
-    except billing.BillingError as exc:
-        raise _billing_error(exc) from exc
+    return _stripe_call(billing.portal, user.id)
 
 
 @app.post("/api/stripe/webhook")
