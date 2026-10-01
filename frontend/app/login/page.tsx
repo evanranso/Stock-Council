@@ -192,6 +192,19 @@ function LoginPage() {
         >
           {busy ? "One moment…" : mode === "signup" ? "Create account" : mode === "login" ? "Log in" : mode === "forgot" ? "Send reset link" : "Save password"}
         </button>
+        {mode === "signup" && (
+          <p className="text-center text-xs text-zinc-500">
+            By creating an account you agree to the{" "}
+            <Link href="/terms" className="text-brand-300 hover:underline">
+              Terms of Service
+            </Link>{" "}
+            and{" "}
+            <Link href="/privacy" className="text-brand-300 hover:underline">
+              Privacy Policy
+            </Link>
+            . Stock Council is research, not investment advice.
+          </p>
+        )}
         {needsCaptcha && !captcha && <p className="text-center text-xs text-zinc-500">Waiting for the quick bot check…</p>}
       </form>
 

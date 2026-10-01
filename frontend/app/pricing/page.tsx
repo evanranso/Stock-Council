@@ -179,7 +179,12 @@ function PricingPage() {
       )}
 
       <p className="text-center text-xs text-zinc-500">
-        Payments are processed securely by Stripe. Stock Council never sees your card details.
+        Payments are processed securely by Stripe. Stock Council never sees your card details. Subscriptions renew monthly until you cancel;
+        cancel anytime from Manage billing. By purchasing you agree to the{" "}
+        <Link href="/terms" className="text-brand-300 hover:underline">
+          Terms of Service
+        </Link>
+        .
       </p>
     </div>
   );

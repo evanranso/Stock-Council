@@ -41,8 +41,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </header>
         <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
-        <footer className="mx-auto max-w-6xl px-4 pb-10 text-xs text-zinc-600">
-          AI-generated research from public data. Not investment advice. Data can be delayed or incomplete.
+        <footer className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-4 pb-10 text-xs text-zinc-600">
+          <span>AI-generated research from public data. Not investment advice. Data can be delayed or incomplete.</span>
+          <nav className="flex gap-3 sm:ml-auto">
+            <Link href="/terms" className="hover:text-zinc-300">
+              Terms
+            </Link>
+            <Link href="/privacy" className="hover:text-zinc-300">
+              Privacy
+            </Link>
+            <Link href="/pricing" className="hover:text-zinc-300">
+              Pricing
+            </Link>
+          </nav>
         </footer>
         </AuthProvider>
       </body>
