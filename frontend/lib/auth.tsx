@@ -16,6 +16,8 @@ export interface Me {
   free_granted: boolean;
   is_admin: boolean;
   unlimited?: boolean;
+  /** Plus/Pro (or admin): the community library and other people's recent reports. */
+  community?: boolean;
   free_credits: number;
   plan?: "plus" | "pro" | null;
   plan_status?: string | null;

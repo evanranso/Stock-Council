@@ -1,5 +1,4 @@
 // The community library: every completed analysis on the site.
-import { API } from "./api";
 import { authFetch } from "./auth";
 import type { DepthId } from "./depth";
 import type { Horizon } from "./horizon";
@@ -27,10 +26,15 @@ export interface CommunityQuery {
   q: string;
 }
 
-export async function fetchCommunity(query: CommunityQuery, offset = 0, limit = 30): Promise<{ total: number; items: CommunityItem[] } | null> {
+export async function fetchCommunity(
+  query: CommunityQuery,
+  offset = 0,
+  limit = 30,
+): Promise<{ total: number; items: CommunityItem[]; locked?: boolean } | null> {
   const params = new URLSearchParams({ ...query, offset: String(offset), limit: String(limit) });
   try {
-    const res = await fetch(`${API}/api/community?${params}`);
+    // With the sign-in token: Plus/Pro members get the items, everyone else a locked count.
+    const res = await authFetch(`/api/community?${params}`);
     return res.ok ? res.json() : null;
   } catch {
     return null;
@@ -38,10 +42,13 @@ export async function fetchCommunity(query: CommunityQuery, offset = 0, limit = 
 }
 
 /** A full community report. Needs a signed-in, verified account ("sign_in" otherwise). */
-export async function fetchCommunityAnalysis(id: string): Promise<{ ticker: string; events: StoredEvent[] } | "sign_in" | null> {
+export async function fetchCommunityAnalysis(
+  id: string,
+): Promise<{ ticker: string; events: StoredEvent[] } | "sign_in" | "upgrade" | null> {
   try {
     const res = await authFetch(`/api/community/${encodeURIComponent(id)}`);
     if (res.status === 401 || res.status === 403) return "sign_in";
+    if (res.status === 402) return "upgrade";
     return res.ok ? res.json() : null;
   } catch {
     return null;

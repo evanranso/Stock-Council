@@ -56,21 +56,65 @@ _daily_runs: dict[str, int] = {}
 # Authorization header, so a signed-in page first trades its token for a pass (POST /api/stream-ticket)
 # and puts that in the stream URL. Passes expire quickly and never reveal the sign-in token itself.
 TICKET_SECONDS = 120
-_tickets: dict[str, tuple[str, float]] = {}
+_tickets: dict[str, tuple[User, float]] = {}
 
 
-def _issue_ticket(user_id: str) -> str:
+def _issue_ticket(user: User) -> str:
     now = time.time()
     for key in [k for k, (_, exp) in _tickets.items() if exp < now]:
         _tickets.pop(key, None)
     ticket = secrets.token_urlsafe(24)
-    _tickets[ticket] = (user_id, now + TICKET_SECONDS)
+    _tickets[ticket] = (user, now + TICKET_SECONDS)
     return ticket
 
 
-def _ticket_valid(ticket: str | None) -> bool:
+def _ticket_user(ticket: str | None) -> User | None:
     found = _tickets.get(ticket or "")
-    return bool(found and found[1] >= time.time())
+    return found[0] if found and found[1] >= time.time() else None
+
+
+def _ticket_valid(ticket: str | None) -> bool:
+    return _ticket_user(ticket) is not None
+
+
+# Other people's analyses (the community library and recent reports) are a Plus/Pro perk.
+PAID_PLANS = {"plus", "pro"}
+ACTIVE_PLAN_STATUSES = {"active", "trialing", "past_due", "canceling"}  # canceling: paid through period end
+UPGRADE = "Community reports are included with Plus and Pro."
+
+
+def _has_community(user: User | None) -> bool:
+    if settings.access_mode != "accounts":
+        return True  # open / invite modes have no plans
+    if user is None:
+        return False
+    if user.is_admin:
+        return True
+    account = cache.get_account(user.id) or {}
+    return account.get("plan") in PAID_PLANS and account.get("plan_status") in ACTIVE_PLAN_STATUSES
+
+
+def _can_read(user: User | None, symbol: str, events: list[dict[str, Any]] | None, live: Any = None) -> bool:
+    """May this user see this (cached or running) analysis? Their own runs, or with community access."""
+    if settings.access_mode != "accounts":
+        return True
+    if user is None:
+        return False
+    if live is not None and live.user_id == user.id:
+        return True
+    if events is not None and cache.has_saved_run(user.id, cache.run_key(symbol, events)):
+        return True
+    return _has_community(user)
+
+
+def _buy_options(user: User | None) -> dict[str, Any]:
+    """What a locked visitor could do instead: sign in, or (signed in) spend credits on their own run."""
+    account = _account_for(user) if user else None
+    return {
+        "signed_in": user is not None,
+        "remaining": account["remaining"] if account else None,
+        "depths": [d.public() for d in all_depths()],
+    }
 
 
 class AccessDenied(Exception):
@@ -214,30 +258,27 @@ def status(
     """Would opening this ticker at this depth be free (running, or recently analyzed at least this deep)?"""
     symbol = _ticker(ticker)
     profile = get_depth(depth)
-    locked = settings.access_mode == "accounts" and user is None  # account holders only
     if symbol in _live:
         live = _live[symbol]
         out: dict[str, Any] = {"free": True, "reason": "running", "depth": live.depth}
-        if locked:
+        if not _can_read(user, symbol, None, live):
             start = next((e for e in live.events if e.get("type") == "start"), {})
-            out.update(locked=True, teaser={"name": start.get("company_name"), "depth": live.depth, "running": True})
+            out.update(
+                locked=True,
+                teaser={"name": start.get("company_name"), "depth": live.depth, "running": True},
+                **_buy_options(user),
+            )
         return out
     cached = cache.get_run(symbol, profile.id)
     if cached is not None:
         out = {"free": True, "reason": "cached"}
-        if locked:
+        if not _can_read(user, symbol, cached):
+            # The rating and conclusions are the valuable part: the teaser only says a report exists.
             s = cache._summary(cached)
             out.update(
                 locked=True,
-                teaser={
-                    "name": s["name"],
-                    "depth": s["depth"],
-                    "scores": s["scores"],
-                    "rating": s["rating"],
-                    "score": s["score"],
-                    "bottom_line": s["bottom_line"],
-                    "finished_at": s["finished_at"],
-                },
+                teaser={"name": s["name"], "depth": s["depth"], "finished_at": s["finished_at"]},
+                **_buy_options(user),
             )
         return out
     invite = cache.get_invite(code)
@@ -259,6 +300,7 @@ COMMUNITY_DAYS = {"1": 1, "7": 7, "30": 30, "90": 90, "all": None}
 
 @app.get("/api/community")
 def community(
+    user: User | None = Depends(optional_user),
     days: str = "30",
     rating: str = "all",
     horizon: str = "months",
@@ -305,22 +347,27 @@ def community(
     elif sort == "confidence":
         items.sort(key=lambda i: -(i["confidence"] or 0))
     limit = max(1, min(limit, 100))
+    if not _has_community(user):
+        # Plus/Pro only: everyone else learns how much is in the library, not what's in it.
+        return {"total": len(items), "items": [], "horizon": horizon, "locked": True}
     return {"total": len(items), "items": items[offset : offset + limit], "horizon": horizon}
 
 
 @app.get("/api/community/{aid}")
 def community_analysis(aid: str, user: User = Depends(require_user)) -> dict[str, Any]:
-    """A full community report. The list is public; reading a report needs a (free, verified) account."""
+    """A full community report: Plus/Pro (or the person who ran it)."""
     found = cache.get_analysis(aid)
     if not found:
         raise HTTPException(404, "Analysis not found.")
+    if not _can_read(user, found["ticker"], found["events"]):
+        raise HTTPException(402, {"reason": "upgrade", "message": UPGRADE})
     return found
 
 
 @app.get("/api/recent")
-def recent() -> list[dict[str, Any]]:
-    """Stocks analyzed recently: free for anyone to open."""
-    return cache.recent_runs()
+def recent(user: User | None = Depends(optional_user)) -> list[dict[str, Any]]:
+    """Stocks analyzed recently: free to open with community access (Plus/Pro)."""
+    return cache.recent_runs() if _has_community(user) else []
 
 
 # ---------------------------------------------------------------------------
@@ -435,9 +482,14 @@ async def analyze(
     cached = None if (refresh or live) else await asyncio.to_thread(cache.get_run, symbol, profile.id)
     live = live or _live.get(symbol)  # a run may have started while we looked
     refusal: AccessDenied | None = None
-    if settings.access_mode == "accounts" and not _ticket_valid(ticket):
+    viewer = _ticket_user(ticket)
+    if settings.access_mode == "accounts" and viewer is None:
         # With accounts, reports (running or recent) are for signed-in users, who stream with a pass.
         refusal = AccessDenied("sign_in", "Sign in to see this analysis.")
+    elif (live is not None or cached is not None) and not await asyncio.to_thread(
+        _can_read, viewer, symbol, cached, live
+    ):
+        refusal = AccessDenied("upgrade", UPGRADE)
     elif live is None and cached is None and settings.access_mode == "accounts":
         # With accounts, fresh runs start only through POST /api/analyze/{ticker}/start (signed in).
         refusal = AccessDenied("sign_in", "Sign in to run a fresh analysis.")
@@ -482,20 +534,33 @@ async def analyze(
 @app.post("/api/stream-ticket")
 def stream_ticket(user: User = Depends(require_user)) -> dict[str, Any]:
     """A short-lived pass for the analysis stream (EventSource can't send the sign-in header)."""
-    return {"ticket": _issue_ticket(user.id), "expires_in": TICKET_SECONDS}
+    return {"ticket": _issue_ticket(user), "expires_in": TICKET_SECONDS}
 
 
 @app.post("/api/analyze/{ticker}/start")
 async def start_analysis(
-    ticker: str, request: Request, depth: str | None = None, user: User = Depends(require_user)
+    ticker: str,
+    request: Request,
+    depth: str | None = None,
+    fresh: bool = False,
+    user: User = Depends(require_user),
 ) -> dict[str, Any]:
-    """Start a fresh, paid run for a signed-in user (or report that it's already running / cached)."""
+    """Start a fresh, paid run for a signed-in user (or report that it's already running / cached).
+
+    A recent report the user can't read (someone else's, no Plus/Pro) doesn't block them: they can
+    pay for their own fresh run instead (`fresh=1`).
+    """
     symbol = _ticker(ticker)
     profile = get_depth(depth)
     if symbol in _live:
-        return {"state": "running", "depth": _live[symbol].depth}
-    if await asyncio.to_thread(cache.get_run, symbol, profile.id) is not None:
-        return {"state": "cached"}
+        live_run = _live[symbol]
+        readable = await asyncio.to_thread(_can_read, user, symbol, None, live_run)
+        return {"state": "running", "depth": live_run.depth, **({} if readable else {"locked": True})}
+    cached = await asyncio.to_thread(cache.get_run, symbol, profile.id)
+    if cached is not None and (not fresh or await asyncio.to_thread(_can_read, user, symbol, cached)):
+        if await asyncio.to_thread(_can_read, user, symbol, cached):
+            return {"state": "cached"}
+        raise HTTPException(402, {"reason": "upgrade", "message": UPGRADE})
     account = await asyncio.to_thread(_account_for, user)
     if user.is_admin:
         # The site owner (ADMIN_EMAILS): no credits charged and no per-user or daily limits.
@@ -549,7 +614,13 @@ class ImportBody(BaseModel):
 def me(user: User = Depends(require_user)) -> dict[str, Any]:
     account = _account_for(user)
     # Admins (ADMIN_EMAILS) run analyses without spending credits; it's the owner's own API bill.
-    return {**account, "is_admin": user.is_admin, "unlimited": user.is_admin, "free_credits": settings.free_credits}
+    return {
+        **account,
+        "is_admin": user.is_admin,
+        "unlimited": user.is_admin,
+        "community": _has_community(user),
+        "free_credits": settings.free_credits,
+    }
 
 
 @app.post("/api/me/redeem")

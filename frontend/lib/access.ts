@@ -104,7 +104,7 @@ export async function fetchStatus(
 
 export async function fetchRecent(): Promise<RecentRun[]> {
   try {
-    const res = await fetch(`${API}/api/recent`);
+    const res = await authFetch("/api/recent"); // Plus/Pro get the list; everyone else an empty one
     return res.ok ? res.json() : [];
   } catch {
     return [];

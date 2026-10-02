@@ -18,7 +18,20 @@ export interface Teaser {
 }
 
 /** A report for account holders only: the headline shows, the rest is greyed out behind a sign-up prompt. */
-export default function LockedReport({ ticker, teaser, next }: { ticker: string; teaser?: Teaser; next: string }) {
+export default function LockedReport({
+  ticker,
+  teaser,
+  next,
+  signedIn = false,
+  onRunOwn,
+}: {
+  ticker: string;
+  teaser?: Teaser;
+  next: string;
+  signedIn?: boolean;
+  /** Signed-in free users can spend their own credits on a fresh analysis instead of upgrading. */
+  onRunOwn?: () => void;
+}) {
   const [horizon] = useHorizon();
   const at = teaser ? atHorizon(teaser.scores, horizon, teaser) : { rating: null, score: null };
   const nextParam = encodeURIComponent(next);
@@ -27,7 +40,7 @@ export default function LockedReport({ ticker, teaser, next }: { ticker: string;
     <div className="space-y-4">
       <section className="card fade-up p-6 sm:p-8">
         <p className="text-sm text-zinc-400">
-          {teaser?.running ? "Being analyzed right now" : "Community analysis"}
+          {teaser?.running ? "Being analyzed by the community right now" : "Community analysis"}
           {teaser?.finished_at && <> · {timeAgo(teaser.finished_at)}</>}
           {teaser?.depth && (
             <span className="ml-2 rounded-full bg-white/5 px-2 py-0.5 text-xs text-zinc-300">
@@ -75,23 +88,42 @@ export default function LockedReport({ ticker, teaser, next }: { ticker: string;
             <div className="text-2xl" aria-hidden>
               🔒
             </div>
-            <h2 className="mt-2 text-xl font-bold">
-              {teaser?.running ? "Sign in to watch this analysis live" : "Sign in to see the full community analysis"}
-            </h2>
+            <h2 className="mt-2 text-xl font-bold">Community reports are a Plus &amp; Pro perk</h2>
             <p className="mt-2 text-sm text-zinc-400">
-              All 12 analyst reports, the bull and bear cases, the challenger, and how it was scored. Free with an account, and new accounts get
-              free credits to run their own.
+              {teaser?.running
+                ? `Someone is analyzing ${ticker} right now. Plus and Pro members can watch it live and open every report in the community library.`
+                : "Plus and Pro members can open this report and every other analysis in the community library, along with their monthly credits."}
+              {!signedIn && " New accounts get free credits to run their own analyses."}
+              {signedIn && teaser?.running && " Or come back in a few minutes and run your own."}
             </p>
-            <div className="mt-5 flex justify-center gap-3">
-              <Link
-                href={`/login?mode=signup&next=${nextParam}`}
-                className="rounded-lg bg-gradient-to-r from-brand-500 to-accent-500 px-5 py-2.5 font-semibold text-white shadow-lg shadow-brand-500/25 hover:brightness-110"
-              >
-                Sign up free
-              </Link>
-              <Link href={`/login?next=${nextParam}`} className="rounded-lg border border-white/10 px-5 py-2.5 text-zinc-300 hover:text-white">
-                Log in
-              </Link>
+            <div className="mt-5 flex flex-wrap justify-center gap-3">
+              {signedIn ? (
+                <>
+                  <Link
+                    href="/pricing"
+                    className="rounded-lg bg-gradient-to-r from-brand-500 to-accent-500 px-5 py-2.5 font-semibold text-white shadow-lg shadow-brand-500/25 hover:brightness-110"
+                  >
+                    See plans
+                  </Link>
+                  {onRunOwn && !teaser?.running && (
+                    <button onClick={onRunOwn} className="rounded-lg border border-white/10 px-5 py-2.5 text-zinc-300 hover:text-white">
+                      Run my own analysis
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <Link
+                    href={`/login?mode=signup&next=${nextParam}`}
+                    className="rounded-lg bg-gradient-to-r from-brand-500 to-accent-500 px-5 py-2.5 font-semibold text-white shadow-lg shadow-brand-500/25 hover:brightness-110"
+                  >
+                    Sign up free
+                  </Link>
+                  <Link href={`/login?next=${nextParam}`} className="rounded-lg border border-white/10 px-5 py-2.5 text-zinc-300 hover:text-white">
+                    Log in
+                  </Link>
+                </>
+              )}
             </div>
           </div>
         </div>

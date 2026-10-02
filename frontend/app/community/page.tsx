@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import CommunityCard from "@/components/CommunityCard";
+import LockedLibrary from "@/components/LockedLibrary";
+import { useAuth } from "@/lib/auth";
 import { type CommunityItem, type CommunityQuery, fetchCommunity } from "@/lib/community";
 import { HORIZON_ORDER, HORIZON_TAB, useHorizon } from "@/lib/horizon";
 
@@ -44,6 +46,8 @@ export default function CommunityPage() {
   const [items, setItems] = useState<CommunityItem[] | null>(null);
   const [total, setTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [locked, setLocked] = useState(false);
+  const { ready, session } = useAuth();
   const request = useRef(0);
 
   // Debounce typing in the search box.
@@ -56,15 +60,17 @@ export default function CommunityPage() {
   const key = JSON.stringify(query);
 
   useEffect(() => {
+    if (!ready) return; // fetch with the sign-in token once we know it
     const id = ++request.current;
     setItems(null);
     fetchCommunity(query, 0, PAGE).then((r) => {
       if (id !== request.current) return; // a newer filter change won
+      setLocked(!!r?.locked);
       setItems(r?.items ?? []);
       setTotal(r?.total ?? 0);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [key, ready, session]);
 
   async function loadMore() {
     if (!items) return;
@@ -79,7 +85,7 @@ export default function CommunityPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Community analyses</h1>
         <p className="mt-1 text-sm text-zinc-400">
-          Every analysis anyone has run on Stock Council. Filter for the strongest calls, then open any report free with an account. Older reports reflect the
+          Every analysis anyone has run on Stock Council. Filter for the strongest calls and open any report. Included with Plus and Pro. Older reports reflect the
           data at the time they ran.
         </p>
       </div>
@@ -116,7 +122,9 @@ export default function CommunityPage() {
         </div>
       </div>
 
-      {items === null ? (
+      {locked ? (
+        <LockedLibrary total={total} signedIn={!!session} />
+      ) : items === null ? (
         <div className="space-y-2">
           {[0, 1, 2, 3].map((i) => (
             <div key={i} className="card h-20 animate-pulse" />

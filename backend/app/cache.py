@@ -595,7 +595,7 @@ def save_for_user(user_id: str, ticker: str, events: list[dict[str, Any]]) -> st
     s = _summary(events)
     if s["rating"] is None:
         return None
-    run_key = f"{ticker}:{s['finished_at'] or ''}"
+    key = run_key(ticker, events)
     rid = secrets.token_urlsafe(9)
     with _db() as conn:
         conn.execute(
@@ -605,7 +605,7 @@ def save_for_user(user_id: str, ticker: str, events: list[dict[str, Any]]) -> st
             (
                 rid,
                 user_id,
-                run_key,
+                key,
                 ticker,
                 s["name"],
                 s["depth"],
@@ -618,8 +618,18 @@ def save_for_user(user_id: str, ticker: str, events: list[dict[str, Any]]) -> st
                 json.dumps(s["scores"]) if s["scores"] else None,
             ),
         )
-        row = conn.one("SELECT id FROM saved_runs WHERE user_id = ? AND run_key = ?", (user_id, run_key))
+        row = conn.one("SELECT id FROM saved_runs WHERE user_id = ? AND run_key = ?", (user_id, key))
     return row["id"] if row else None
+
+
+def has_saved_run(user_id: str, key: str) -> bool:
+    with _db() as conn:
+        row = conn.one("SELECT 1 AS x FROM saved_runs WHERE user_id = ? AND run_key = ?", (user_id, key))
+    return row is not None
+
+
+def run_key(ticker: str, events: list[dict[str, Any]]) -> str:
+    return f"{ticker}:{_summary(events)['finished_at'] or ''}"
 
 
 def list_saved(user_id: str, limit: int = 100) -> list[dict[str, Any]]:

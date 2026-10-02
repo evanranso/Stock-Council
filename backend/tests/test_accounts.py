@@ -50,7 +50,17 @@ def backend(request, monkeypatch):
         db._pool = None
         cache._ready.clear()
         with db.connect() as conn:
-            for t in ("runs", "usage", "invites", "verdicts", "accounts", "redemptions", "saved_runs", "payments"):
+            for t in (
+                "runs",
+                "usage",
+                "invites",
+                "verdicts",
+                "accounts",
+                "redemptions",
+                "saved_runs",
+                "payments",
+                "analyses",
+            ):
                 conn.execute(f"DROP TABLE IF EXISTS {t}")
     yield request.param
     if request.param == "postgres":
@@ -73,6 +83,7 @@ def client(backend, monkeypatch):
     monkeypatch.setattr(main, "settings", s)
     monkeypatch.setattr(auth, "get_settings", lambda: s)
     monkeypatch.setattr(main, "_recent_runs", main.defaultdict(main.deque))
+    monkeypatch.setattr(main, "_daily_runs", {})
     monkeypatch.setattr(main, "_live", {})
     monkeypatch.setattr(main.cache, "record_verdict", lambda run: None)
 
@@ -165,17 +176,68 @@ def test_paid_run_charges_saves_history_and_is_then_free(client, monkeypatch):
     assert client.get("/api/me/history", headers=bearer(sub="someone-else")).json() == []
     assert client.get(f"/api/me/history/{history[0]['id']}", headers=bearer(sub="someone-else")).status_code == 404
 
-    # Now cached: free for any signed-in account, and "start" doesn't charge again.
-    assert client.post("/api/analyze/ACME/start?depth=quick", headers=bearer(sub="u9")).json()["state"] == "cached"
-    ticket = client.post("/api/stream-ticket", headers=bearer(sub="u9")).json()["ticket"]
-    assert events(client.get(f"/api/analyze/ACME?depth=quick&ticket={ticket}"))[0]["cached"] is True
+    def stream(sub):
+        ticket = client.post("/api/stream-ticket", headers=bearer(sub=sub)).json()["ticket"]
+        return events(client.get(f"/api/analyze/ACME?depth=quick&ticket={ticket}"))[0]
 
-    # Signed out: no report, only a teaser (what the public community list shows anyway).
+    # The person who ran it can always reopen it, free, and "start" doesn't charge again.
+    assert client.post("/api/analyze/ACME/start?depth=quick", headers=bearer()).json()["state"] == "cached"
+    assert stream("user-1")["cached"] is True
+
+    # Another free account: locked (Plus/Pro perk). The teaser says a report exists, not what it concludes.
+    assert stream("u9")["reason"] == "upgrade"
+    status = client.get("/api/status/ACME?depth=quick", headers=bearer(sub="u9")).json()
+    assert status["locked"] is True and status["teaser"]["name"] == "Acme"
+    assert set(status["teaser"]) == {"name", "depth", "finished_at"}  # no rating or bottom line
+    assert "rating" not in status["teaser"] and status["signed_in"] is True and status["remaining"] == 4
+    assert client.post("/api/analyze/ACME/start?depth=quick", headers=bearer(sub="u9")).status_code == 402
+
+    # ...or a subscriber: free to open.
+    cache.ensure_account("sub-1", "s@example.com", 4, 50)
+    cache.set_subscription("sub-1", "plus", "active", "sub_x", None)
+    assert stream("sub-1")["cached"] is True
+    assert "locked" not in client.get("/api/status/ACME?depth=quick", headers=bearer(sub="sub-1")).json()
+    cache.set_subscription("sub-1", None, "canceled", None, None)  # plan over: locked again
+    assert stream("sub-1")["reason"] == "upgrade"
+
+    # Signed out: no report, only the teaser.
     assert events(client.get("/api/analyze/ACME?depth=quick"))[0]["reason"] == "sign_in"
     assert events(client.get("/api/analyze/ACME?depth=quick&ticket=made-up"))[0]["reason"] == "sign_in"
-    status = client.get("/api/status/ACME?depth=quick").json()
-    assert status["locked"] is True and status["teaser"]["name"] == "Acme" and "events" not in status
-    assert "locked" not in client.get("/api/status/ACME?depth=quick", headers=bearer(sub="u9")).json()
+    assert client.get("/api/status/ACME?depth=quick").json()["signed_in"] is False
+
+
+def test_free_user_can_pay_for_their_own_run_over_a_locked_report(client, monkeypatch):
+    monkeypatch.setattr(main, "run_council", council())
+    client.post("/api/analyze/ACME/start?depth=standard", headers=bearer())  # user-1's run
+    wait_idle("ACME")
+    started = client.post("/api/analyze/ACME/start?depth=quick&fresh=1", headers=bearer(sub="u9")).json()
+    assert started["state"] == "started" and started["remaining"] == 3
+    wait_idle("ACME")
+    assert [h["ticker"] for h in client.get("/api/me/history", headers=bearer(sub="u9")).json()] == ["ACME"]
+
+
+def test_community_library_is_plus_and_pro(client, monkeypatch):
+    monkeypatch.setattr(main, "run_council", council())
+    client.post("/api/analyze/ACME/start?depth=standard", headers=bearer())
+    wait_idle("ACME")
+    anon = client.get("/api/community?days=all").json()
+    assert anon["locked"] is True and anon["total"] == 1 and anon["items"] == []
+    assert client.get("/api/recent").json() == []
+    free = client.get("/api/community?days=all", headers=bearer(sub="u9")).json()
+    assert free["locked"] is True and free["items"] == []
+    assert client.get("/api/me", headers=bearer(sub="u9")).json()["community"] is False
+
+    cache.ensure_account("sub-1", "s@example.com", 4, 50)
+    cache.set_subscription("sub-1", "pro", "canceling", "sub_x", None)  # canceled but paid through the month
+    paid = client.get("/api/community?days=all", headers=bearer(sub="sub-1")).json()
+    assert "locked" not in paid and [i["ticker"] for i in paid["items"]] == ["ACME"]
+    assert [r["ticker"] for r in client.get("/api/recent", headers=bearer(sub="sub-1")).json()] == ["ACME"]
+    aid = paid["items"][0]["id"]
+    assert client.get(f"/api/community/{aid}", headers=bearer(sub="sub-1")).status_code == 200
+    assert client.get(f"/api/community/{aid}", headers=bearer(sub="u9")).json()["detail"]["reason"] == "upgrade"
+    assert client.get(f"/api/community/{aid}", headers=bearer()).status_code == 200  # the person who ran it
+    boss = bearer(sub="boss", email="boss@example.com")
+    assert client.get("/api/me", headers=boss).json()["community"] is True  # admin
 
 
 def test_stream_tickets_expire(client, monkeypatch):

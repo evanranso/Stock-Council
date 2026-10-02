@@ -17,11 +17,20 @@ import Report from "./Report";
 
 type Phase =
   | { kind: "checking" }
-  | { kind: "confirm"; mode: AccessMode; remaining?: number; depths: DepthOption[]; error?: string; unlimited?: boolean }
+  | {
+      kind: "confirm";
+      mode: AccessMode;
+      remaining?: number;
+      depths: DepthOption[];
+      error?: string;
+      unlimited?: boolean;
+      /** Run fresh even though a (locked) recent report exists. */
+      fresh?: boolean;
+    }
   | { kind: "gate"; reason: string }
   | { kind: "starting" }
   | { kind: "unreachable" }
-  | { kind: "locked"; teaser?: Teaser }
+  | { kind: "locked"; teaser?: Teaser; signedIn: boolean; remaining?: number | null; depths?: DepthOption[] }
   | { kind: "stream" };
 
 // Live analysis: checks whether this is free or costs credits, lets the visitor pick a depth,
@@ -46,7 +55,8 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
     fetchStatus(ticker, wanted).then((s: TickerStatus | null) => {
       if (cancelled) return;
       if (!s) return setPhase({ kind: "unreachable" });
-      if (s.free && s.locked) return setPhase({ kind: "locked", teaser: s.teaser });
+      if (s.free && s.locked)
+        return setPhase({ kind: "locked", teaser: s.teaser, signedIn: !!s.signed_in, remaining: s.remaining, depths: s.depths });
       if (s.free) return setPhase({ kind: "stream" });
       const depths = s.depths?.length ? s.depths : DEFAULT_DEPTHS;
       const cheapest = Math.min(...depths.map((d) => d.credits));
@@ -99,6 +109,12 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
 
     source.onmessage = (msg) => {
       const event = JSON.parse(msg.data) as StoredEvent;
+      if (event.type === "error" && event.reason === "upgrade") {
+        finished = true;
+        source.close();
+        setPhase({ kind: "locked", signedIn });
+        return;
+      }
       if (event.type === "error" && event.reason && ["invite_required", "no_credits", "sign_in"].includes(event.reason)) {
         finished = true;
         source.close();
@@ -148,16 +164,19 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
   }, [ticker, phase.kind, depth]);
 
   // Signed-in accounts: charge and start the run on the server first (EventSource can't send a token), then follow it.
-  async function startAccountRun(d: DepthId, depths: DepthOption[], remaining?: number) {
+  async function startAccountRun(d: DepthId, depths: DepthOption[], remaining?: number, fresh = false) {
     setPhase({ kind: "starting" });
     try {
-      const res = await authFetch(`/api/analyze/${encodeURIComponent(ticker)}/start?depth=${d}`, { method: "POST" });
+      const res = await authFetch(`/api/analyze/${encodeURIComponent(ticker)}/start?depth=${d}${fresh ? "&fresh=1" : ""}`, { method: "POST" });
+      const body = await res.json().catch(() => ({}));
       if (res.ok) {
         meChanged();
+        // Someone else's run is in progress and this account can't watch it: show that instead.
+        if (body?.locked) return setPhase({ kind: "locked", teaser: { running: true, depth: body.depth }, signedIn: true });
         return setPhase({ kind: "stream" });
       }
-      const body = await res.json().catch(() => ({}));
       const reason = body?.detail?.reason;
+      if (reason === "upgrade") return setPhase({ kind: "locked", signedIn: true, remaining, depths });
       if (res.status === 401 || res.status === 403) return setPhase({ kind: "gate", reason: res.status === 403 ? "verify_email" : "sign_in" });
       if (reason === "no_credits") return setPhase({ kind: "gate", reason: "no_credits" });
       const message = body?.detail?.message ?? (typeof body?.detail === "string" ? body.detail : "Couldn't start the analysis. Try again in a minute.");
@@ -168,7 +187,23 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
   }
 
   if (phase.kind === "checking" || phase.kind === "starting") return <Waiting />;
-  if (phase.kind === "locked") return <LockedReport ticker={ticker} teaser={phase.teaser} next={`/analyze?t=${ticker}`} />;
+  if (phase.kind === "locked") {
+    const depths = phase.depths?.length ? phase.depths : DEFAULT_DEPTHS;
+    const cheapest = Math.min(...depths.map((d) => d.credits));
+    const runOwn = () =>
+      (phase.remaining ?? 0) < cheapest
+        ? setPhase({ kind: "gate", reason: "no_credits" })
+        : setPhase({ kind: "confirm", mode: "accounts", remaining: phase.remaining ?? 0, depths, fresh: true });
+    return (
+      <LockedReport
+        ticker={ticker}
+        teaser={phase.teaser}
+        next={`/analyze?t=${ticker}`}
+        signedIn={phase.signedIn}
+        onRunOwn={phase.signedIn ? runOwn : undefined}
+      />
+    );
+  }
   if (phase.kind === "unreachable")
     return (
       <div className="card mx-auto max-w-xl space-y-3 p-6 text-center">
@@ -188,7 +223,7 @@ export default function Council({ ticker, requestedDepth }: { ticker: string; re
         onRun={(d, free) => {
           savePreferredDepth(d);
           setDepth(d);
-          if (phase.mode === "accounts" && !free) startAccountRun(d, phase.depths, phase.remaining);
+          if (phase.mode === "accounts" && (!free || phase.fresh)) startAccountRun(d, phase.depths, phase.remaining, phase.fresh);
           else setPhase({ kind: "stream" });
         }}
       />
@@ -230,7 +265,8 @@ function ConfirmRun({
 
   // A lighter tier may already be cached (free); label it.
   useEffect(() => {
-    Promise.all(phase.depths.map((d) => fetchStatus(ticker, d.id).then((s) => (s?.free ? d.id : null)))).then((ids) =>
+    // A recent report you can't open (someone else's, no Plus/Pro) isn't free for you.
+    Promise.all(phase.depths.map((d) => fetchStatus(ticker, d.id).then((s) => (s?.free && !s.locked && !phase.fresh ? d.id : null)))).then((ids) =>
       setFreeDepths(ids.filter((x): x is DepthId => x !== null)),
     );
   }, [ticker, phase.depths]);

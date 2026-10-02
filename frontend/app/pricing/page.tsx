@@ -152,6 +152,14 @@ function PricingPage() {
                     analyses
                   </li>
                   {perCredit !== null && <li className="text-zinc-500">{money({ ...p.price!, amount: perCredit, interval: null })} per credit</li>}
+                  {p.kind === "subscription" ? (
+                    <li>
+                      <span className="text-emerald-300">✓</span> <span className="font-semibold text-white">Community library</span>: open every
+                      analysis on the site
+                    </li>
+                  ) : (
+                    <li className="text-zinc-500">Doesn&apos;t include the community library</li>
+                  )}
                   <li className="text-zinc-500">{p.kind === "subscription" ? "Unused credits roll over. Cancel anytime." : "Credits never expire."}</li>
                 </ul>
                 {!ready ? null : !session ? (

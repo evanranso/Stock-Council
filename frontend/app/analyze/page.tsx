@@ -57,7 +57,7 @@ function SavedReport({ id, ticker, source = "local" }: { id: string; ticker: str
       }
       setNeedsAccount(false);
       fetchCommunityAnalysis(id).then((r) => {
-        if (r === "sign_in") return setNeedsAccount(true);
+        if (r === "sign_in" || r === "upgrade") return setNeedsAccount(true);
         setEvents(r?.events ?? null);
       });
       return;
@@ -71,7 +71,7 @@ function SavedReport({ id, ticker, source = "local" }: { id: string; ticker: str
       .catch(() => setEvents(null));
   }, [id, source, account, ready, signedIn]);
 
-  if (needsAccount) return <CommunityGate ticker={ticker} id={id} />;
+  if (needsAccount) return <CommunityGate ticker={ticker} id={id} signedIn={signedIn} />;
   if (events === undefined) return <div className="card h-40 animate-pulse" />;
   if (!events) {
     return (
@@ -105,8 +105,8 @@ function SavedReport({ id, ticker, source = "local" }: { id: string; ticker: str
 }
 
 /** Community reports are for account holders: greyed out behind a sign-up prompt that brings them right back. */
-function CommunityGate({ ticker, id }: { ticker: string; id: string }) {
-  return <LockedReport ticker={ticker} next={`/analyze?t=${ticker}&community=${id}`} />;
+function CommunityGate({ ticker, id, signedIn }: { ticker: string; id: string; signedIn: boolean }) {
+  return <LockedReport ticker={ticker} next={`/analyze?t=${ticker}&community=${id}`} signedIn={signedIn} />;
 }
 
 export default function Page() {
