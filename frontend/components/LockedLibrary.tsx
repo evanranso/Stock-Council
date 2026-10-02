@@ -16,9 +16,10 @@ export default function LockedLibrary({
   compact?: boolean;
   next?: string;
 }) {
-  const count = compact ? 3 : 8;
+  const count = compact ? 6 : 8;
   return (
-    <div className="relative overflow-hidden rounded-2xl">
+    // Tall enough that the lock card on top always fits, whatever the screen width.
+    <div className={`relative overflow-hidden rounded-2xl ${compact ? "min-h-[260px]" : "min-h-[440px]"}`}>
       <ul aria-hidden className={`pointer-events-none grid select-none gap-3 opacity-40 blur-[3px] grayscale ${compact ? "sm:grid-cols-3" : "lg:grid-cols-2"}`}>
         {FAKE.slice(0, count).map((t, i) => (
           <li key={t} className="card flex items-center gap-4 p-4">
