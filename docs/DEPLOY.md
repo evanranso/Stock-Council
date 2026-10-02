@@ -59,11 +59,11 @@ The site deploys as a Cloudflare **Worker** serving static files (`frontend/wran
 ## Step 3: Connect them
 
 In Render → `stock-council-api` → **Environment**, set `ALLOWED_ORIGINS` to your site URL, for
-example `https://stock-council.evanranaso.workers.dev`. Save; Render redeploys automatically. If you
+example `https://stockcouncil.ca` (or `https://stock-council.<your-subdomain>.workers.dev` before you add a custom domain). Save; Render redeploys automatically. If you
 add a custom domain later, add it too, comma-separated.
 
 Open the site, enter a ticker, and the council should run. Share links look like
-`https://stock-council.evanranaso.workers.dev/analyze?t=AAPL`.
+`https://stockcouncil.ca/analyze?t=AAPL`.
 
 ---
 
@@ -97,7 +97,7 @@ analyzed stock stays free for everyone, signed in or not.
 **Supabase dashboard (one time):**
 1. **Authentication → Sign In / Providers → Email:** enable, with **Confirm email** on.
 2. **Authentication → URL Configuration:** Site URL = your site (e.g.
-   `https://stock-council.evanranaso.workers.dev`). Redirect URLs: add `https://<your-site>/login**`
+   `https://stockcouncil.ca`). Redirect URLs: add `https://<your-site>/login**`
    (and `http://localhost:3000/login**` for local testing).
 3. **Authentication → Attack Protection:** enable CAPTCHA with Cloudflare Turnstile and paste the
    Turnstile **secret** key there (never in the code or chat). The site key is public and lives in
@@ -149,7 +149,7 @@ Set it up in **Test mode** first (toggle at the top of the Stripe dashboard):
    methods, and switching between the Plus and Pro prices.
 5. **Render → Environment:** `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PLUS`,
    `STRIPE_PRICE_PRO`, `STRIPE_PRICE_TOPUP`, and `SITE_URL` (your site, e.g.
-   `https://stock-council.evanranaso.workers.dev`). Optional: `PLUS_CREDITS` (10), `PRO_CREDITS` (30),
+   `https://stockcouncil.ca`). Optional: `PLUS_CREDITS` (10), `PRO_CREDITS` (30),
    `TOPUP_CREDITS` (5).
 6. Test on `/pricing` with card `4242 4242 4242 4242`, any future date, any CVC.
 
